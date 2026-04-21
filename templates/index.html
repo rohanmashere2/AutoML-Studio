@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AutoML Studio - Upload your dataset, and let AI automatically clean, transform, train, explain, and deploy the best machine learning model.">
+    <title>AutoML Studio | Automated Machine Learning Platform</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+</head>
+<body>
+<!-- Animated Background -->
+<div class="bg-mesh">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+</div>
+
+<div class="studio-layout" id="studioLayout">
+    <!-- ============================================================
+         SIDEBAR
+         ============================================================ -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">
+                <div class="logo-icon">⚡</div>
+                <span class="logo-text">AutoML Studio</span>
+            </div>
+        </div>
+        <nav class="sidebar-nav">
+            <a class="nav-item active" data-page="dashboard" id="nav-dashboard">
+                <span class="nav-icon">🏠</span>
+                <span class="nav-label">Dashboard</span>
+            </a>
+            <a class="nav-item" data-page="dataset" id="nav-dataset">
+                <span class="nav-icon">📂</span>
+                <span class="nav-label">Dataset</span>
+            </a>
+            <a class="nav-item" data-page="analysis" id="nav-analysis">
+                <span class="nav-icon">📊</span>
+                <span class="nav-label">Analysis</span>
+            </a>
+            <a class="nav-item" data-page="automl" id="nav-automl">
+                <span class="nav-icon">⚙️</span>
+                <span class="nav-label">AutoML</span>
+            </a>
+            <a class="nav-item" data-page="models" id="nav-models">
+                <span class="nav-icon">🤖</span>
+                <span class="nav-label">Models</span>
+            </a>
+            <a class="nav-item" data-page="visualization" id="nav-visualization">
+                <span class="nav-icon">📈</span>
+                <span class="nav-label">Visualization</span>
+            </a>
+            <a class="nav-item" data-page="insights" id="nav-insights">
+                <span class="nav-icon">🧠</span>
+                <span class="nav-label">Insights</span>
+            </a>
+            <a class="nav-item" data-page="assistant" id="nav-assistant">
+                <span class="nav-icon">💬</span>
+                <span class="nav-label">Assistant</span>
+            </a>
+            <a class="nav-item" data-page="feature_studio" id="nav-feature-studio">
+                <span class="nav-icon">🧪</span>
+                <span class="nav-label">Feature Studio</span>
+            </a>
+            <a class="nav-item" data-page="competition" id="nav-competition">
+                <span class="nav-icon">🏆</span>
+                <span class="nav-label">Competition</span>
+            </a>
+            <a class="nav-item" data-page="deployment" id="nav-deployment">
+                <span class="nav-icon">📦</span>
+                <span class="nav-label">Deployment</span>
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <button class="theme-toggle" id="themeToggle" title="Toggle theme">🌙</button>
+            <div class="session-badge" id="sessionBadge">No session</div>
+        </div>
+    </aside>
+
+    <!-- ============================================================
+         MAIN CONTENT
+         ============================================================ -->
+    <main class="main-content">
+        <!-- Top Bar -->
+        <div class="topbar" id="topbar">
+            <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+            <div class="topbar-title" id="topbarTitle">Dashboard</div>
+            <div class="topbar-actions">
+                <button class="btn btn-primary btn-sm" id="topUploadBtn" onclick="document.getElementById('globalFileInput').click()">
+                    <span class="btn-icon">📤</span> Upload Dataset
+                </button>
+                <input type="file" id="globalFileInput" accept=".csv,.tsv,.xlsx,.xls,.json,.parquet" style="display:none">
+                <button class="btn btn-secondary btn-sm" id="saveProjectBtn" onclick="saveCurrentProject()" style="display:none">
+                    <span class="btn-icon">💾</span> Save
+                </button>
+            </div>
+        </div>
+
+        <!-- Page Container -->
+        <div class="page-container">
+
+            <!-- ================================================================
+                 PAGE: DASHBOARD
+                 ================================================================ -->
+            <div class="page active" id="page-dashboard">
+                <div class="stats-row" id="dashboardStats">
+                    <div class="stat-card">
+                        <div class="stat-icon">📂</div>
+                        <div class="stat-value" id="statDatasets">0</div>
+                        <div class="stat-label">Total Datasets</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🤖</div>
+                        <div class="stat-value" id="statModels">0</div>
+                        <div class="stat-label">Models Trained</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🏆</div>
+                        <div class="stat-value" id="statBestAcc">—</div>
+                        <div class="stat-label">Best Accuracy</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⏱️</div>
+                        <div class="stat-value" id="statLastRun">—</div>
+                        <div class="stat-label">Last Run</div>
+                    </div>
+                </div>
+                <div class="dashboard-grid">
+                    <div class="glass-card">
+                        <div class="section-title"><div class="icon cyan">📊</div><span>Model Performance</span></div>
+                        <div class="chart-container"><canvas id="dashPerformanceChart"></canvas></div>
+                    </div>
+                    <div class="glass-card">
+                        <div class="section-title"><div class="icon purple">📋</div><span>Recent Activity</span></div>
+                        <div class="activity-feed" id="activityFeed">
+                            <div class="activity-item"><span class="activity-dot"></span><span class="activity-text">Welcome to AutoML Studio</span><span class="activity-time">Just now</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 PAGE: DATASET
+                 ================================================================ -->
+            <div class="page" id="page-dataset">
+                <div class="page-section">
+                    <div class="glass-card glow-cyan">
+                        <div class="section-title"><div class="icon cyan">📤</div><span>Upload Dataset</span></div>
+                        <div class="upload-area" id="uploadArea">
+                            <input type="file" id="fileInput" accept=".csv,.tsv,.xlsx,.xls,.json,.parquet" style="display:none">
+                            <div id="uploadPrompt">
+                                <span class="upload-icon">📂</span>
+                                <p class="upload-text">Drag & drop your dataset file here</p>
+                                <p class="upload-hint">CSV, Excel, JSON, Parquet, TSV · Max 100MB</p>
+                            </div>
+                            <div id="fileSelectedInfo" class="hidden">
+                                <div class="file-selected"><span>✅</span><span id="selectedFileName"></span></div>
+                            </div>
+                        </div>
+                        <div class="form-group mt-16">
+                            <label class="form-label">Problem Statement (optional)</label>
+                            <textarea class="form-textarea" id="problemStatement" placeholder="e.g. Predict whether a customer will churn..."></textarea>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn btn-primary" id="analyzeBtn" disabled>
+                                <span class="btn-icon">🔍</span> Analyze Dataset
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- Profile Results -->
+                <div class="page-section hidden" id="profileResults">
+                    <div class="glass-card">
+                        <div class="section-title"><div class="icon purple">📊</div><span>Dataset Analysis</span></div>
+                        <div class="detection-grid" id="detectionGrid"></div>
+                        <div class="bento-grid mt-16">
+                            <div class="form-group" style="margin-bottom:0">
+                                <label class="form-label">Target Column</label>
+                                <select class="form-select" id="targetSelect"></select>
+                            </div>
+                            <div class="form-group" style="margin-bottom:0">
+                                <label class="form-label">Problem Type</label>
+                                <select class="form-select" id="problemTypeSelect">
+                                    <option value="classification">Classification</option>
+                                    <option value="regression">Regression</option>
+                                    <option value="forecasting">Time Series Forecasting</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="glass-card mt-16">
+                        <div class="section-title"><div class="icon cyan">👁️</div><span>Data Preview</span></div>
+                        <div class="table-wrapper" id="previewTableWrapper"></div>
+                    </div>
+                    <div class="glass-card mt-16">
+                        <div class="section-title"><div class="icon green">📋</div><span>Column Details</span></div>
+                        <div class="table-wrapper" id="columnInfoWrapper"></div>
+                    </div>
+                </div>
+                <!-- Multi-Dataset Manager -->
+                <div class="glass-card mt-16" id="multiDatasetPanel" style="display:none">
+                    <div class="section-title"><div class="icon purple">📁</div><span>Dataset Manager</span></div>
+                    <div id="datasetListContent"></div>
+                </div>
+                <!-- Dataset Similarity (v3.0) -->
+                <div class="glass-card mt-16 hidden" id="similarityPanel">
+                    <div class="section-title">
+                        <div class="icon blue">🧬</div><span>Dataset Similarity Matches</span>
+                        <button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="findSimilarDatasets()">🔍 Find Similar</button>
+                    </div>
+                    <div id="similarityContent"><p class="text-dim">Search our database for historical datasets similar to yours.</p></div>
+                </div>
+                <!-- Problem Reframing (v3.0) -->
+                <div class="glass-card mt-16 hidden" id="reframingPanel">
+                    <div class="section-title">
+                        <div class="icon orange">📐</div><span>AI Problem Reframing</span>
+                        <button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="getReframingSuggestions()">🔄 Suggest Reframing</button>
+                    </div>
+                    <div id="reframingContent"><p class="text-dim">Discover alternative ways to frame your machine learning problem.</p></div>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 PAGE: ANALYSIS (EDA)
+                 ================================================================ -->
+            <div class="page" id="page-analysis">
+                <div class="page-header-row">
+                    <h2 class="page-heading">Exploratory Data Analysis</h2>
+                    <button class="btn btn-primary" id="runEdaBtn" onclick="runAutoEDA()" disabled>🔍 Run AutoEDA</button>
+                </div>
+                <!-- Narrative EDA (v3.0) -->
+                <div class="glass-card mt-16 hidden glow-purple" id="narrativeEdaPanel">
+                    <div class="section-title"><div class="icon purple">📝</div><span>Executive EDA Narrative</span></div>
+                    <div id="narrativeEdaContent" class="summary"></div>
+                </div>
+                <div id="edaResults" class="mt-16">
+                    <div class="glass-card"><p class="text-dim text-center" style="padding:40px">Upload a dataset first, then run AutoEDA to see analysis results.</p></div>
+                </div>
+                <!-- Cleaning Suggestions -->
+                <div class="glass-card mt-16 hidden" id="cleaningSuggestionsPanel">
+                    <div class="section-title"><div class="icon green">🧪</div><span>AI Cleaning Suggestions</span>
+                        <button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="getCleaningSuggestions()">🔄 Refresh</button>
+                    </div>
+                    <div id="cleaningSuggestionsList"></div>
+                    <div class="btn-group mt-16">
+                        <button class="btn btn-primary" id="applyCleaningBtn" onclick="applySelectedSuggestions()">✅ Apply Selected</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 PAGE: AUTOML PIPELINE
+                 ================================================================ -->
+            <div class="page" id="page-automl">
+                <div class="glass-card glow-cyan">
+                    <div class="section-title"><div class="icon cyan">⚙️</div><span>AutoML Pipeline</span></div>
+                    <!-- Pipeline Flow Viz -->
+                    <div class="pipeline-flow" id="pipelineFlow">
+                        <div class="pipeline-node pending" data-step="upload"><div class="node-icon">📤</div><div class="node-label">Upload</div></div>
+                        <div class="pipeline-connector"></div>
+                        <div class="pipeline-node pending" data-step="clean"><div class="node-icon">🧹</div><div class="node-label">Clean</div></div>
+                        <div class="pipeline-connector"></div>
+                        <div class="pipeline-node pending" data-step="transform"><div class="node-icon">🔄</div><div class="node-label">Features</div></div>
+                        <div class="pipeline-connector"></div>
+                        <div class="pipeline-node pending" data-step="train"><div class="node-icon">🤖</div><div class="node-label">Train</div></div>
+                        <div class="pipeline-connector"></div>
+                        <div class="pipeline-node pending" data-step="evaluate"><div class="node-icon">📊</div><div class="node-label">Evaluate</div></div>
+                        <div class="pipeline-connector"></div>
+                        <div class="pipeline-node pending" data-step="deploy"><div class="node-icon">📦</div><div class="node-label">Output</div></div>
+                    </div>
+                    <div class="bento-grid mt-24">
+                        <div class="form-group" style="margin-bottom:0">
+                            <label class="form-label">Target Column</label>
+                            <select class="form-select" id="pipelineTargetSelect"></select>
+                        </div>
+                        <div class="form-group" style="margin-bottom:0">
+                            <label class="form-label">Detected Problem Type</label>
+                            <div class="problem-type-badge" id="problemTypeBadge">—</div>
+                        </div>
+                    </div>
+                    <!-- Progress -->
+                    <div class="progress-container hidden" id="automlProgress">
+                        <div class="progress-bar-wrapper"><div class="progress-bar-fill" id="automlProgressBar"></div></div>
+                        <div class="progress-text">
+                            <span class="progress-message" id="automlProgressMsg">Ready</span>
+                            <span class="progress-percent" id="automlProgressPct">0%</span>
+                        </div>
+                    </div>
+                    <div class="btn-group mt-16">
+                        <button class="btn btn-primary btn-lg" id="runAutoMLBtn" disabled onclick="runFullPipeline()">
+                            <span class="btn-icon">🚀</span> Run AutoML
+                        </button>
+                        <button class="btn btn-secondary" id="semiAutoBtn" onclick="toggleSemiAutoPanel()">
+                            <span class="btn-icon">🔧</span> Semi-Auto Mode
+                        </button>
+                    </div>
+                </div>
+                <!-- Semi-Auto Panel -->
+                <div class="glass-card mt-16 hidden" id="semiAutoPanel">
+                    <div class="section-title"><div class="icon purple">🔧</div><span>Custom Pipeline Configuration</span></div>
+                    <div class="form-group">
+                        <label class="form-label">Select Models</label>
+                        <div class="checkbox-group" id="modelCheckboxes">
+                            <label class="checkbox-item"><input type="checkbox" value="Random Forest" checked> Random Forest</label>
+                            <label class="checkbox-item"><input type="checkbox" value="XGBoost" checked> XGBoost</label>
+                            <label class="checkbox-item"><input type="checkbox" value="LightGBM" checked> LightGBM</label>
+                            <label class="checkbox-item"><input type="checkbox" value="Gradient Boosting" checked> Gradient Boosting</label>
+                            <label class="checkbox-item"><input type="checkbox" value="Logistic Regression"> Logistic Regression</label>
+                            <label class="checkbox-item"><input type="checkbox" value="KNN"> KNN</label>
+                            <label class="checkbox-item"><input type="checkbox" value="SVM"> SVM</label>
+                            <label class="checkbox-item"><input type="checkbox" value="Decision Tree"> Decision Tree</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Preprocessing</label>
+                        <div class="checkbox-group" id="preprocessCheckboxes">
+                            <label class="checkbox-item"><input type="checkbox" value="scaling" checked> Feature Scaling</label>
+                            <label class="checkbox-item"><input type="checkbox" value="encoding" checked> Encoding</label>
+                            <label class="checkbox-item"><input type="checkbox" value="imputation" checked> Missing Value Imputation</label>
+                            <label class="checkbox-item"><input type="checkbox" value="outlier_removal"> Outlier Removal</label>
+                            <label class="checkbox-item"><input type="checkbox" value="pca"> PCA Reduction</label>
+                            <label class="checkbox-item"><input type="checkbox" value="smote"> SMOTE (Imbalance)</label>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="applyCustomPipeline()">💾 Save Configuration</button>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 PAGE: MODELS
+                 ================================================================ -->
+            <div class="page" id="page-models">
+                <div class="page-header-row">
+                    <h2 class="page-heading">Model Comparison & Leaderboard</h2>
+                </div>
+                <div id="modelsContent">
+                    <div class="glass-card"><p class="text-dim text-center" style="padding:40px">Run AutoML pipeline first to see model results.</p></div>
+                </div>
+                <!-- Hyperparameter Optimization -->
+                <div class="glass-card mt-16 hidden" id="hyperoptPanel">
+                    <div class="section-title"><div class="icon purple">⚡</div><span>Hyperparameter Optimization</span></div>
+                    <div class="bento-grid">
+                        <div class="form-group" style="margin-bottom:0">
+                            <label class="form-label">Method</label>
+                            <select class="form-select" id="hyperoptMethod">
+                                <option value="auto">Auto (Recommended)</option>
+                                <option value="grid">Grid Search</option>
+                                <option value="random">Random Search</option>
+                                <option value="bayesian">Bayesian (Optuna)</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin-bottom:0">
+                            <label class="form-label">Budget (trials)</label>
+                            <input type="range" class="form-range" id="hyperoptBudget" min="10" max="100" value="30">
+                            <span class="range-label" id="hyperoptBudgetLabel">30</span>
+                        </div>
+                    </div>
+                    <div class="btn-group mt-16">
+                        <button class="btn btn-purple" id="runHyperoptBtn" onclick="runHyperopt()">⚡ Optimize Hyperparameters</button>
+                    </div>
+                    <div id="hyperoptResults" class="mt-16"></div>
+                </div>
+                <!-- Model Calibration (v3.0) -->
+                <div class="glass-card mt-16 hidden" id="calibrationPanel">
+                    <div class="section-title"><div class="icon blue">⚖️</div><span>Model Calibration</span></div>
+                    <p class="text-dim mb-16">Fix overconfident probabilities to align with actual accuracy metrics.</p>
+                    <div class="bento-grid">
+                        <div class="form-group">
+                            <label class="form-label">Calibration Method</label>
+                            <select class="form-select" id="calibrationMethod">
+                                <option value="platt">Platt Scaling (Sigmoid)</option>
+                                <option value="isotonic">Isotonic Regression</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary mt-16" onclick="calibrateModel()">⚖️ Calibrate Model</button>
+                    <div id="calibrationResults" class="mt-16"></div>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 PAGE: VISUALIZATION
+                 ================================================================ -->
+            <div class="page" id="page-visualization">
+                <div class="page-header-row">
+                    <h2 class="page-heading">Interactive Visualizations</h2>
+                </div>
+                <!-- Explainer tools (v3.0) -->
+                <div class="glass-card mb-16 hidden" id="explainerPanel">
+                    <div class="section-title"><div class="icon purple">🎯</div><span>"What-If" Analysis (Counterfactuals)</span></div>
+                    <p class="text-dim mb-16">Enter a row index and desired target value to see what must change to achieve that outcome.</p>
+                    <div class="bento-grid">
+                        <div class="form-group">
+                            <label class="form-label">Data Row Index (0-${profileData?.n_rows || 100})</label>
+                            <input type="number" class="form-input" id="cfRowIndex" value="0" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Desired Outcome</label>
+                            <input type="text" class="form-input" id="cfDesiredOutcome" placeholder="1 or 0">
+                        </div>
+                    </div>
+                    <button class="btn btn-purple mt-16" onclick="generateCounterfactuals()">🔄 Generate Scenarios</button>
+                    <div id="cfResults" class="mt-16"></div>
+                </div>
+
+                <div id="vizContent">
+                    <div class="glass-card"><p class="text-dim text-center" style="padding:40px">Train models first to see visualizations.</p></div>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 PAGE: INSIGHTS
+                 ================================================================ -->
+            <div class="page" id="page-insights">
+                <div class="page-header-row">
+                    <h2 class="page-heading">AI Insights & Monitoring</h2>
+                </div>
+                <!-- Feature Importance Panel -->
+                <div class="glass-card hidden" id="featureRankingPanel">
+                    <div class="section-title"><div class="icon green">🧠</div><span>Feature Importance Ranking</span></div>
+                    <div id="featureRankingContent"></div>
+                </div>
+                <!-- AI Insights -->
+                <div class="glass-card mt-16" id="aiInsightsPanel">
+                    <div class="section-title"><div class="icon purple">💡</div><span>AI Recommendations</span></div>
+                    <div id="aiInsightsContent"><p class="text-dim">Train a model to get AI-powered insights and recommendations.</p></div>
+                </div>
+                <!-- Data Drift -->
+                <div class="glass-card mt-16" id="dataDriftPanel">
+                    <div class="section-title"><div class="icon cyan">🔍</div><span>Data Drift Detection</span></div>
+                    <p class="text-dim mb-16">Upload new data to check if distributions have changed.</p>
+                    <input type="file" id="driftFileInput" accept=".csv,.xlsx,.json,.parquet" style="display:none">
+                    <button class="btn btn-secondary" onclick="document.getElementById('driftFileInput').click()" id="driftUploadBtn" disabled>📂 Upload Data for Drift Check</button>
+                    <div id="driftResult" class="mt-16"></div>
+                </div>
+                <!-- Model Drift -->
+                <div class="glass-card mt-16" id="modelDriftPanel">
+                    <div class="section-title"><div class="icon magenta">📉</div><span>Model Drift Detection</span></div>
+                    <p class="text-dim mb-16">Upload labeled data to check if model accuracy has dropped.</p>
+                    <input type="file" id="modelDriftFileInput" accept=".csv,.xlsx,.json,.parquet" style="display:none">
+                    <button class="btn btn-secondary" onclick="document.getElementById('modelDriftFileInput').click()" id="modelDriftUploadBtn" disabled>📂 Upload Labeled Data</button>
+                    <div id="modelDriftResult" class="mt-16"></div>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 PAGE: ASSISTANT
+                 ================================================================ -->
+            <div class="page" id="page-assistant">
+                <div class="glass-card glow-purple chat-card">
+                    <div class="section-title"><div class="icon purple">💬</div><span>AI Assistant</span></div>
+                    <div class="chat-container">
+                        <div class="chat-messages" id="chatMessages">
+                            <div class="chat-msg assistant"><div class="chat-avatar">🤖</div><div class="chat-bubble">Hello! I'm your AutoML assistant. Ask me anything about your data or models. Try:<br>• "What's the best model?"<br>• "How can I improve accuracy?"<br>• "Explain the features"</div></div>
+                        </div>
+                        <div class="chat-quick-actions">
+                            <button class="quick-btn" onclick="sendQuickChat('What is the best model?')">Best model?</button>
+                            <button class="quick-btn" onclick="sendQuickChat('How to improve accuracy?')">Improve accuracy?</button>
+                            <button class="quick-btn" onclick="sendQuickChat('Explain the most important features')">Explain features</button>
+                            <button class="quick-btn" onclick="sendQuickChat('Compare models')">Compare models</button>
+                        </div>
+                        <div class="chat-input-row">
+                            <input type="text" class="form-input" id="chatInput" placeholder="Ask about your data, models, or ML concepts..." onkeydown="if(event.key==='Enter') sendChat()">
+                            <button class="btn btn-primary" onclick="sendChat()">Send</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 PAGE: FEATURE STUDIO (v3.0)
+                 ================================================================ -->
+            <div class="page" id="page-feature_studio">
+                <div class="page-header-row">
+                    <h2 class="page-heading">Feature Engineering Studio</h2>
+                </div>
+                <div class="glass-card glow-cyan">
+                    <div class="section-title"><div class="icon cyan">➕</div><span>Create New Feature</span></div>
+                    <p class="text-dim mb-16">Write math expressions using existing column names. Example: <code>Income / Family_Size</code>.</p>
+                    <div class="form-group">
+                        <label class="form-label">New Feature Name</label>
+                        <input type="text" class="form-input" id="fsFeatureName" placeholder="e.g. Income_Per_Capita">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Expression</label>
+                        <input type="text" class="form-input" id="fsExpression" placeholder="e.g. Income / Family_Size">
+                    </div>
+                    <div class="btn-group mt-16">
+                        <button class="btn btn-secondary" onclick="previewFeature()">👁️ Preview</button>
+                        <button class="btn btn-primary" onclick="addFeature()">✅ Add to Dataset</button>
+                    </div>
+                    <div id="fsPreviewResult" class="mt-16"></div>
+                </div>
+
+                <div class="glass-card mt-16">
+                    <div class="section-title"><div class="icon purple">💡</div><span>AI Feature Suggestions</span>
+                        <button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="getFeatureSuggestions()">🔄 Suggest Features</button>
+                    </div>
+                    <div id="fsSuggestionsContent"><p class="text-dim">Get AI-driven ideas for new features.</p></div>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 PAGE: COMPETITION (v3.0)
+                 ================================================================ -->
+            <div class="page" id="page-competition">
+                <div class="page-header-row">
+                    <h2 class="page-heading">Global Leaderboard</h2>
+                    <button class="btn btn-primary" onclick="submitToCompetition()" id="compSubmitBtn" disabled>🏆 Submit Current Model</button>
+                </div>
+                <div class="glass-card">
+                    <div class="section-title"><div class="icon orange">🥇</div><span>Top Models Worldwide</span></div>
+                    <p class="text-dim mb-16">See how your models rank against past runs and stored projects.</p>
+                    <div class="bento-grid mb-16">
+                         <div class="form-group">
+                             <label class="form-label">Filter Problem Type</label>
+                             <select class="form-select" id="compProblemType" onchange="loadCompetitionBoard()">
+                                 <option value="all">All</option>
+                                 <option value="classification">Classification</option>
+                                 <option value="regression">Regression</option>
+                             </select>
+                         </div>
+                    </div>
+                    <div id="competitionBoardContent"><p class="text-dim text-center">Loading leaderboard...</p></div>
+                </div>
+            </div>
+
+            <!-- ================================================================
+                 PAGE: DEPLOYMENT
+                 ================================================================ -->
+            <div class="page" id="page-deployment">
+                <div class="page-header-row">
+                    <h2 class="page-heading">Model Deployment & Reports</h2>
+                </div>
+                <div class="bento-grid">
+                    <div class="glass-card glow-green">
+                        <div class="section-title"><div class="icon green">⬇️</div><span>Download Model</span></div>
+                        <p class="text-dim mb-16">Download the best trained model as a .pkl file for local use.</p>
+                        <button class="btn btn-success" id="dlModelBtn" onclick="downloadModel()" disabled>⬇️ Download Model (.pkl)</button>
+                    </div>
+                    <div class="glass-card glow-cyan">
+                        <div class="section-title"><div class="icon cyan">🚀</div><span>API Endpoint</span></div>
+                        <p class="text-dim mb-16">Auto-generated FastAPI endpoint for prediction.</p>
+                        <div class="code-block" id="apiCodeBlock"><pre><code>POST /predict
+Content-Type: application/json
+
+{
+  "features": {...}
+}</code></pre></div>
+                        <button class="btn btn-primary mt-16" id="exportDeployBtn" onclick="exportDeployment()" disabled>📦 Export Deployment Package</button>
+                    </div>
+                </div>
+                <!-- Executive Report (v3.0) -->
+                <div class="glass-card mt-16 glow-purple">
+                    <div class="section-title"><div class="icon purple">📝</div><span>AI Executive Summary</span></div>
+                    <p class="text-dim mb-16">Generate a non-technical business report explaining the model's impact and recommended actions.</p>
+                    <button class="btn btn-purple" id="dlExecReportBtn" onclick="generateExecutiveReport()" disabled>📊 Generate Executive Report</button>
+                </div>
+                <div class="glass-card mt-16">
+                    <div class="section-title"><div class="icon blue">📄</div><span>Technical Reports & Export</span></div>
+                    <div class="btn-group">
+                        <button class="btn btn-secondary" id="dlReportBtn" onclick="downloadReport()" disabled>📄 Download HTML Report</button>
+                        <button class="btn btn-secondary" id="dlCsvBtn" onclick="downloadCSV()" disabled>📋 Download Cleaned CSV</button>
+                    </div>
+                </div>
+                <!-- Saved Projects -->
+                <div class="glass-card mt-16">
+                    <div class="section-title"><div class="icon cyan">💾</div><span>Saved Projects</span>
+                        <button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="loadProjectsList()">🔄 Refresh</button>
+                    </div>
+                    <div id="projectsList"><p class="text-dim">No saved projects yet.</p></div>
+                </div>
+            </div>
+
+        </div><!-- /page-container -->
+    </main>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

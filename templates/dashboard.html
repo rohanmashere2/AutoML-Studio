@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="AutoML Studio — Automated Machine Learning Platform Dashboard with model leaderboard, drift monitoring, and AI assistant.">
+    <title>AutoML Studio | Project Overview</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+
+    <!-- ═══════════════════════════════════════════════════════════
+     UPLOAD MODAL (Dataset Picker)
+     ═══════════════════════════════════════════════════════════ -->
+    <div class="modal-backdrop" id="uploadModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2 class="modal-title">📂 Upload Dataset</h2>
+                <button class="modal-close" id="modalCloseBtn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="upload-drop-zone" id="dropZone">
+                    <input type="file" id="fileInput" accept=".csv,.tsv,.xlsx,.xls,.json,.parquet" style="display:none">
+                    <div class="drop-icon">📤</div>
+                    <p class="drop-text">Drag & drop your dataset file here</p>
+                    <p class="drop-hint">CSV, Excel, JSON, Parquet, TSV · Max 100MB</p>
+                    <button class="btn btn-outline" style="margin-top:14px"
+                        onclick="document.getElementById('fileInput').click()">Browse Files</button>
+                </div>
+                <div class="file-selected-info hidden" id="fileSelectedInfo">
+                    <span class="file-check">✅</span>
+                    <span class="file-name" id="selectedFileName"></span>
+                    <button class="btn btn-outline btn-sm" onclick="clearFile()">✕ Clear</button>
+                </div>
+                <div class="form-group mt-16">
+                    <label class="form-label">Problem Statement (optional)</label>
+                    <textarea class="form-textarea" id="problemStatement"
+                        placeholder="e.g. Predict whether a customer will churn based on usage metrics..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Target Column (optional — auto-detected)</label>
+                    <input type="text" class="form-input" id="targetColumnInput"
+                        placeholder="e.g. Churn, target, label">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeUploadModal()">Cancel</button>
+                <button class="btn btn-primary-solid" id="startPipelineBtn" disabled onclick="startPipeline()">
+                    🚀 Upload & Run Pipeline
+                </button>
+            </div>
+            <!-- Progress inside modal -->
+            <div class="modal-progress hidden" id="modalProgress">
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="modalProgressBar"></div>
+                </div>
+                <p class="progress-msg" id="modalProgressMsg">Uploading dataset...</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="app-layout" id="appLayout">
+        <!-- ═══════════════════════════════════════════════════════
+         SIDEBAR
+         ═══════════════════════════════════════════════════════ -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-brand">
+                <div class="brand-icon">⚡</div>
+                <div class="brand-info">
+                    <span class="brand-name">AutoML Studio</span>
+                    <span class="brand-version" id="brandVersion">v2.0 · no dataset</span>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <div class="nav-group">
+                    <div class="nav-group-label">WORKSPACE</div>
+                    <a class="nav-link active" data-page="overview" id="nav-overview">
+                        <span class="nav-dot active"></span>
+                        <span class="nav-text">Overview</span>
+                    </a>
+                    <a class="nav-link" data-page="pipeline" id="nav-pipeline">
+                        <span class="nav-dot"></span>
+                        <span class="nav-text">Pipeline</span>
+                    </a>
+                    <a class="nav-link" data-page="data-explorer" id="nav-data-explorer">
+                        <span class="nav-dot"></span>
+                        <span class="nav-text">Data Explorer</span>
+                    </a>
+                </div>
+
+                <div class="nav-group">
+                    <div class="nav-group-label">MODELS</div>
+                    <a class="nav-link" data-page="leaderboard" id="nav-leaderboard">
+                        <span class="nav-dot"></span>
+                        <span class="nav-text">Leaderboard</span>
+                    </a>
+                    <a class="nav-link" data-page="explainability" id="nav-explainability">
+                        <span class="nav-dot"></span>
+                        <span class="nav-text">Explainability</span>
+                    </a>
+                    <a class="nav-link" data-page="fairness" id="nav-fairness">
+                        <span class="nav-dot"></span>
+                        <span class="nav-text">Fairness</span>
+                        <span class="nav-badge" id="fairnessBadge" style="display:none">1</span>
+                    </a>
+                </div>
+
+                <div class="nav-group">
+                    <div class="nav-group-label">OPS</div>
+                    <a class="nav-link" data-page="drift-monitor" id="nav-drift-monitor">
+                        <span class="nav-dot"></span>
+                        <span class="nav-text">Drift Monitor</span>
+                        <span class="nav-badge alert" id="driftBadge" style="display:none">!</span>
+                    </a>
+                    <a class="nav-link" data-page="experiments" id="nav-experiments">
+                        <span class="nav-dot"></span>
+                        <span class="nav-text">Experiments</span>
+                    </a>
+                    <a class="nav-link" data-page="deploy" id="nav-deploy">
+                        <span class="nav-dot"></span>
+                        <span class="nav-text">Deploy</span>
+                    </a>
+                </div>
+            </nav>
+
+            <div class="sidebar-bottom">
+                <a class="nav-link" data-page="assistant" id="nav-assistant">
+                    <span class="nav-dot"></span>
+                    <span class="nav-text">AI Assistant</span>
+                </a>
+                <a class="nav-link" data-page="settings" id="nav-settings">
+                    <span class="nav-dot"></span>
+                    <span class="nav-text">Settings</span>
+                </a>
+            </div>
+        </aside>
+
+        <!-- ═══════════════════════════════════════════════════════
+         MAIN CONTENT
+         ═══════════════════════════════════════════════════════ -->
+        <main class="main-area">
+            <!-- Top Header Bar -->
+            <header class="top-header">
+                <button class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar">☰</button>
+                <div class="header-left">
+                    <h1 class="header-title">Project Overview — <span class="header-project" id="headerProject">No
+                            Project</span></h1>
+                    <span class="status-badge" id="statusBadge" style="display:none">Not Started</span>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-primary-solid" id="uploadDatasetBtn" onclick="openUploadModal()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                        Upload Dataset
+                    </button>
+                    <button class="btn btn-outline" id="exportReportBtn" style="display:none">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                            <line x1="16" y1="13" x2="8" y2="13" />
+                            <line x1="16" y1="17" x2="8" y2="17" />
+                        </svg>
+                        Export Report
+                    </button>
+                    <button class="btn btn-primary-solid" id="retrainBtn" style="display:none">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <polyline points="23 4 23 10 17 10" />
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                        </svg>
+                        Retrain
+                    </button>
+                </div>
+            </header>
+
+            <!-- Page Content Wrapper -->
+            <div class="content-scroll">
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: OVERVIEW (shown after pipeline completes)
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page active" id="page-overview">
+
+                    <!-- Empty State (no data uploaded yet) -->
+                    <div class="empty-state" id="emptyState">
+                        <div class="empty-icon">📂</div>
+                        <h2 class="empty-title">Welcome to AutoML Studio</h2>
+                        <p class="empty-desc">Upload a dataset to get started. The pipeline will automatically clean,
+                            transform, train, tune, and evaluate models.</p>
+                        <button class="btn btn-primary-solid btn-lg" onclick="openUploadModal()">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="17 8 12 3 7 8" />
+                                <line x1="12" y1="3" x2="12" y2="15" />
+                            </svg>
+                            Upload Dataset
+                        </button>
+                    </div>
+
+                    <!-- Dashboard Content (shown after pipeline completes) -->
+                    <div class="dashboard-content hidden" id="dashboardContent">
+
+                        <!-- Pipeline Stepper -->
+                        <section class="pipeline-stepper" id="pipelineStepper">
+                            <div class="step pending" data-step="upload" id="step-upload">
+                                <span class="step-dot"></span>
+                                <span class="step-label">Upload</span>
+                            </div>
+                            <div class="step-connector" id="conn-0"></div>
+                            <div class="step pending" data-step="clean" id="step-clean">
+                                <span class="step-dot"></span>
+                                <span class="step-label">Clean</span>
+                            </div>
+                            <div class="step-connector" id="conn-1"></div>
+                            <div class="step pending" data-step="transform" id="step-transform">
+                                <span class="step-dot"></span>
+                                <span class="step-label">Transform</span>
+                            </div>
+                            <div class="step-connector" id="conn-2"></div>
+                            <div class="step pending" data-step="train" id="step-train">
+                                <span class="step-dot"></span>
+                                <span class="step-label">Train</span>
+                            </div>
+                            <div class="step-connector" id="conn-3"></div>
+                            <div class="step pending" data-step="tune" id="step-tune">
+                                <span class="step-dot"></span>
+                                <span class="step-label">Tune</span>
+                            </div>
+                            <div class="step-connector" id="conn-4"></div>
+                            <div class="step pending" data-step="monitor" id="step-monitor">
+                                <span class="step-dot"></span>
+                                <span class="step-label">Monitor</span>
+                            </div>
+                        </section>
+
+                        <!-- KPI Cards -->
+                        <section class="kpi-row" id="kpiRow">
+                            <div class="kpi-card" id="kpi-f1">
+                                <div class="kpi-label">Best Model F1</div>
+                                <div class="kpi-value green" id="kpiF1Value">—</div>
+                                <div class="kpi-sub green" id="kpiF1Sub">&nbsp;</div>
+                            </div>
+                            <div class="kpi-card" id="kpi-auc">
+                                <div class="kpi-label">ROC-AUC</div>
+                                <div class="kpi-value green" id="kpiAucValue">—</div>
+                                <div class="kpi-sub green" id="kpiAucSub">&nbsp;</div>
+                            </div>
+                            <div class="kpi-card" id="kpi-drift">
+                                <div class="kpi-label">Data Drift Score</div>
+                                <div class="kpi-value yellow" id="kpiDriftValue">—</div>
+                                <div class="kpi-sub yellow" id="kpiDriftSub">&nbsp;</div>
+                            </div>
+                            <div class="kpi-card" id="kpi-predictions">
+                                <div class="kpi-label">Predictions (7d)</div>
+                                <div class="kpi-value white" id="kpiPredValue">—</div>
+                                <div class="kpi-sub dim" id="kpiPredSub">&nbsp;</div>
+                            </div>
+                        </section>
+
+                        <!-- Leaderboard + Drift -->
+                        <section class="dual-panel">
+                            <div class="panel-card leaderboard-panel" id="leaderboardPanel">
+                                <h2 class="panel-title">MODEL LEADERBOARD</h2>
+                                <div class="leaderboard-list" id="leaderboardList">
+                                    <p class="text-dim">Train models to see leaderboard.</p>
+                                </div>
+                            </div>
+                            <div class="panel-card drift-panel" id="driftPanel">
+                                <h2 class="panel-title">DRIFT — LAST 7 DAYS</h2>
+                                <div class="drift-chart" id="driftChart">
+                                    <canvas id="driftCanvas"></canvas>
+                                </div>
+                                <div class="drift-alert" id="driftAlert" style="display:none">
+                                    <p id="driftAlertText"></p>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Feature Importance + AI Assistant -->
+                        <section class="dual-panel">
+                            <div class="panel-card feature-panel" id="featurePanel">
+                                <h2 class="panel-title">TOP FEATURE IMPORTANCE</h2>
+                                <div class="feature-list" id="featureList">
+                                    <p class="text-dim">Train models to see feature importance.</p>
+                                </div>
+                            </div>
+                            <div class="panel-card assistant-panel" id="assistantPanel">
+                                <h2 class="panel-title">AI ASSISTANT</h2>
+                                <div class="chat-area" id="chatArea">
+                                    <div class="chat-message bot">
+                                        <div class="chat-avatar">🤖</div>
+                                        <div class="chat-bubble">
+                                            <p>Hello! I'm your AutoML assistant. Upload a dataset and run the pipeline —
+                                                I'll provide insights on your models and data.</p>
+                                            <div class="quick-actions">
+                                                <button class="chip"
+                                                    onclick="handleChip('What models can you train?')">🤖 Available
+                                                    models</button>
+                                                <button class="chip"
+                                                    onclick="handleChip('How does the pipeline work?')">⚙️ Pipeline
+                                                    steps</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="chat-input-area">
+                                    <input type="text" class="chat-input" id="chatInput"
+                                        placeholder="Ask about your models, data, or pipeline..." autocomplete="off">
+                                    <button class="chat-send" id="chatSendBtn" aria-label="Send message">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="2">
+                                            <line x1="22" y1="2" x2="11" y2="13" />
+                                            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: PIPELINE (detailed pipeline view)
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page" id="page-pipeline">
+                    <div class="panel-card">
+                        <h2 class="panel-title">PIPELINE CONFIGURATION</h2>
+                        <div class="pipeline-detail" id="pipelineDetail">
+                            <div class="config-row">
+                                <span class="config-label">Target Column</span>
+                                <span class="config-value" id="cfgTarget">—</span>
+                            </div>
+                            <div class="config-row">
+                                <span class="config-label">Problem Type</span>
+                                <span class="config-value" id="cfgProblem">—</span>
+                            </div>
+                            <div class="config-row">
+                                <span class="config-label">Dataset Rows</span>
+                                <span class="config-value" id="cfgRows">—</span>
+                            </div>
+                            <div class="config-row">
+                                <span class="config-label">Dataset Columns</span>
+                                <span class="config-value" id="cfgCols">—</span>
+                            </div>
+                            <div class="config-row">
+                                <span class="config-label">Session ID</span>
+                                <span class="config-value mono" id="cfgSession">—</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="panel-card mt-16">
+                        <h2 class="panel-title">PIPELINE LOG</h2>
+                        <div class="pipeline-log" id="pipelineLog">
+                            <p class="text-dim">No pipeline runs yet.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: DATA EXPLORER
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page" id="page-data-explorer">
+                    <div class="panel-card">
+                        <h2 class="panel-title">DATA PREVIEW</h2>
+                        <div class="table-scroll" id="dataPreviewWrapper">
+                            <p class="text-dim">Upload a dataset to explore your data.</p>
+                        </div>
+                    </div>
+                    <div class="panel-card mt-16">
+                        <h2 class="panel-title">COLUMN STATISTICS</h2>
+                        <div class="table-scroll" id="columnStatsWrapper">
+                            <p class="text-dim">Upload a dataset to see column statistics.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: LEADERBOARD (detailed)
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page" id="page-leaderboard">
+                    <div class="panel-card">
+                        <h2 class="panel-title">FULL MODEL LEADERBOARD</h2>
+                        <div class="table-scroll" id="fullLeaderboard">
+                            <p class="text-dim">Run the AutoML pipeline to see model comparisons.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: EXPLAINABILITY
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page" id="page-explainability">
+                    <div class="panel-card">
+                        <h2 class="panel-title">MODEL EXPLAINABILITY (SHAP)</h2>
+                        <div id="explainContent">
+                            <p class="text-dim">Train models first to generate SHAP explanations.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: FAIRNESS
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page" id="page-fairness">
+                    <div class="panel-card">
+                        <h2 class="panel-title">FAIRNESS AUDIT</h2>
+                        <div id="fairnessContent">
+                            <p class="text-dim">Train models first to run fairness analysis.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: DRIFT MONITOR
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page" id="page-drift-monitor">
+                    <div class="panel-card">
+                        <h2 class="panel-title">DRIFT DETECTION</h2>
+                        <p class="text-dim mb-16">Upload new data to check if feature distributions have shifted since
+                            training.</p>
+                        <input type="file" id="driftFileInput" accept=".csv,.xlsx,.json,.parquet" style="display:none">
+                        <button class="btn btn-outline" onclick="document.getElementById('driftFileInput').click()"
+                            id="driftUploadBtn" disabled>📂 Upload Data for Drift Check</button>
+                        <div id="driftResultContent" class="mt-16"></div>
+                    </div>
+                </div>
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: EXPERIMENTS
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page" id="page-experiments">
+                    <div class="panel-card">
+                        <h2 class="panel-title">EXPERIMENT TRACKER</h2>
+                        <div id="experimentsContent">
+                            <p class="text-dim">Run pipelines to start tracking experiments.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: DEPLOY
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page" id="page-deploy">
+                    <div class="dual-panel">
+                        <div class="panel-card">
+                            <h2 class="panel-title">DOWNLOAD MODEL</h2>
+                            <p class="text-dim mb-16">Download the best trained model as a .pkl file.</p>
+                            <button class="btn btn-primary-solid" id="dlModelBtn" onclick="downloadModel()" disabled>⬇️
+                                Download Model (.pkl)</button>
+                        </div>
+                        <div class="panel-card">
+                            <h2 class="panel-title">DEPLOYMENT PACKAGE</h2>
+                            <p class="text-dim mb-16">Export FastAPI endpoint + Dockerfile for deployment.</p>
+                            <button class="btn btn-outline" id="dlDeployBtn" onclick="exportDeployment()" disabled>📦
+                                Export Package (.zip)</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: FULL ASSISTANT
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page" id="page-assistant">
+                    <div class="panel-card assistant-full-panel">
+                        <h2 class="panel-title">AI ASSISTANT</h2>
+                        <div class="chat-area full" id="fullChatArea">
+                            <div class="chat-message bot">
+                                <div class="chat-avatar">🤖</div>
+                                <div class="chat-bubble">
+                                    <p>I'm your AI assistant. Ask me anything about your data, models, or pipeline!</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chat-input-area">
+                            <input type="text" class="chat-input" id="fullChatInput"
+                                placeholder="Ask about your models, data, or pipeline..." autocomplete="off">
+                            <button class="chat-send" id="fullChatSendBtn" aria-label="Send message">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <line x1="22" y1="2" x2="11" y2="13" />
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══════════════════════════════════════════════════
+                 PAGE: SETTINGS
+                 ═══════════════════════════════════════════════════ -->
+                <div class="page" id="page-settings">
+                    <div class="panel-card">
+                        <h2 class="panel-title">SETTINGS</h2>
+                        <div class="config-row">
+                            <span class="config-label">API Base URL</span>
+                            <span class="config-value mono">http://127.0.0.1:5000</span>
+                        </div>
+                        <div class="config-row">
+                            <span class="config-label">Max Upload Size</span>
+                            <span class="config-value">100 MB</span>
+                        </div>
+                        <div class="config-row">
+                            <span class="config-label">Session</span>
+                            <span class="config-value mono" id="settingsSession">None</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div> <!-- /content-scroll -->
+        </main>
+    </div>
+
+    <script src="/static/dashboard.js"></script>
+</body>
+
+</html>
