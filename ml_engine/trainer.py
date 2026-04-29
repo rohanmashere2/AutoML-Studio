@@ -10,7 +10,14 @@ import os
 import warnings
 warnings.filterwarnings('ignore')
 
-from sklearn.model_selection import train_test_split, cross_val_score, RandomizedSearchCV
+from sklearn.model_selection import train_test_split, cross_val_score
+
+try:
+    import optuna
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    HAS_OPTUNA = True
+except ImportError:
+    HAS_OPTUNA = False
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
     mean_absolute_error, mean_squared_error, r2_score,
@@ -33,6 +40,12 @@ try:
     HAS_LGBM = True
 except ImportError:
     HAS_LGBM = False
+
+try:
+    from catboost import CatBoostClassifier, CatBoostRegressor
+    HAS_CATBOOST = True
+except ImportError:
+    HAS_CATBOOST = False
 
 
 # Hyperparameter grids for tuning
@@ -62,6 +75,12 @@ CLASSIFICATION_PARAMS = {
         'learning_rate': [0.01, 0.05, 0.1, 0.2],
         'num_leaves': [15, 31, 63],
     },
+    'CatBoost': {
+        'iterations': [100, 200, 500],
+        'depth': [4, 6, 8, 10],
+        'learning_rate': [0.01, 0.05, 0.1, 0.2],
+        'l2_leaf_reg': [1, 3, 5, 7],
+    },
     'Logistic Regression': {
         'C': [0.01, 0.1, 1, 10],
         'max_iter': [500, 1000],
@@ -89,6 +108,12 @@ REGRESSION_PARAMS = {
         'max_depth': [3, 5, 7, -1],
         'learning_rate': [0.01, 0.05, 0.1, 0.2],
     },
+    'CatBoost': {
+        'iterations': [100, 200, 500],
+        'depth': [4, 6, 8, 10],
+        'learning_rate': [0.01, 0.05, 0.1, 0.2],
+        'l2_leaf_reg': [1, 3, 5, 7],
+    },
     'Ridge': {
         'alpha': [0.01, 0.1, 1, 10, 100],
     },
@@ -115,6 +140,8 @@ def get_models(problem_type, class_weight_balanced=False):
         
         if HAS_XGB:
             models['XGBoost'] = XGBClassifier(n_estimators=100, random_state=42, use_label_encoder=False, eval_metric='logloss', verbosity=0)
+        if HAS_CATBOOST:
+            models['CatBoost'] = CatBoostClassifier(iterations=100, random_state=42, verbose=0)
         if HAS_LGBM:
             models['LightGBM'] = LGBMClassifier(n_estimators=100, random_state=42, verbose=-1)
     else:
@@ -129,6 +156,8 @@ def get_models(problem_type, class_weight_balanced=False):
         }
         if HAS_XGB:
             models['XGBoost'] = XGBRegressor(n_estimators=100, random_state=42, verbosity=0)
+        if HAS_CATBOOST:
+            models['CatBoost'] = CatBoostRegressor(iterations=100, random_state=42, verbose=0)
         if HAS_LGBM:
             models['LightGBM'] = LGBMRegressor(n_estimators=100, random_state=42, verbose=-1)
     
@@ -276,39 +305,26 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
         name = entry['model']
         if name in param_grids and name in trained_models:
             try:
-                model = get_models(problem_type)[name]
-                search = RandomizedSearchCV(
-                    model, param_grids[name],
-                    n_iter=10, cv=3, scoring=scoring,
-                    random_state=42, n_jobs=-1
+                tuned_model, best_params, tuned_score = _optuna_tune(
+                    name, problem_type, param_grids[name],
+                    X_train, y_train, X_test, y_test, scoring, n_trials=20
                 )
-                search.fit(X_train, y_train)
-                
-                # Evaluate tuned model
-                y_test_pred_tuned = search.best_estimator_.predict(X_test)
-                
-                if problem_type == 'classification':
-                    tuned_score = round(float(accuracy_score(y_test, y_test_pred_tuned)), 4)
-                else:
-                    tuned_score = round(float(r2_score(y_test, y_test_pred_tuned)), 4)
                 
                 tuned_results.append({
                     'model': name,
                     'original_score': entry['primary_metric'],
                     'tuned_score': tuned_score,
                     'improvement': round(tuned_score - entry['primary_metric'], 4),
-                    'best_params': {k: (int(v) if isinstance(v, (np.integer,)) else 
-                                       float(v) if isinstance(v, (np.floating,)) else v) 
-                                   for k, v in search.best_params_.items()},
+                    'best_params': best_params,
+                    'method': 'optuna' if HAS_OPTUNA else 'random',
                 })
                 
                 # Update model if improved
-                if tuned_score >= entry['primary_metric']:
-                    trained_models[name] = search.best_estimator_
+                if tuned_score >= entry['primary_metric'] and tuned_model is not None:
+                    trained_models[name] = tuned_model
                     entry['primary_metric'] = tuned_score
                     entry['metrics']['tuned'] = True
-                    # Also update train score for display
-                    y_train_pred_tuned = search.best_estimator_.predict(X_train)
+                    y_train_pred_tuned = tuned_model.predict(X_train)
                     if problem_type == 'classification':
                         entry['metrics']['accuracy'] = tuned_score
                         entry['metrics']['train_accuracy'] = round(float(accuracy_score(y_train, y_train_pred_tuned)), 4)
@@ -392,3 +408,91 @@ def _get_feature_importance(model, feature_names):
         return fi[:20]  # Top 20
     
     return []
+
+
+def _optuna_tune(model_name, problem_type, param_grid, X_train, y_train,
+                 X_test, y_test, scoring, n_trials=20):
+    """Tune a model using Optuna Bayesian optimization (or RandomizedSearchCV fallback).
+    
+    Returns:
+        tuple: (best_model, best_params_dict, test_score)
+    """
+    if HAS_OPTUNA:
+        return _optuna_tune_inner(model_name, problem_type, param_grid,
+                                  X_train, y_train, X_test, y_test, scoring, n_trials)
+    else:
+        return _random_tune_fallback(model_name, problem_type, param_grid,
+                                     X_train, y_train, X_test, y_test, scoring)
+
+
+def _optuna_tune_inner(model_name, problem_type, param_grid, X_train, y_train,
+                       X_test, y_test, scoring, n_trials):
+    """Optuna Bayesian search with MedianPruner."""
+    best = {'score': -np.inf, 'model': None, 'params': {}}
+
+    def objective(trial):
+        params = {}
+        for k, values in param_grid.items():
+            if all(isinstance(v, int) for v in values):
+                params[k] = trial.suggest_int(k, min(values), max(values))
+            elif all(isinstance(v, float) for v in values):
+                params[k] = trial.suggest_float(k, min(values), max(values))
+            else:
+                params[k] = trial.suggest_categorical(k, values)
+
+        model = get_models(problem_type).get(model_name)
+        if model is None:
+            return -np.inf
+        model.set_params(**params)
+
+        try:
+            cv_scores = cross_val_score(model, X_train, y_train, cv=3,
+                                        scoring=scoring, n_jobs=-1)
+            score = float(cv_scores.mean())
+        except Exception:
+            return -np.inf
+
+        if score > best['score']:
+            model.fit(X_train, y_train)
+            best['score'] = score
+            best['model'] = model
+            best['params'] = params
+        return score
+
+    study = optuna.create_study(direction='maximize',
+                                pruner=optuna.pruners.MedianPruner(n_startup_trials=5))
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    if best['model'] is not None:
+        y_pred = best['model'].predict(X_test)
+        if problem_type == 'classification':
+            test_score = round(float(accuracy_score(y_test, y_pred)), 4)
+        else:
+            test_score = round(float(r2_score(y_test, y_pred)), 4)
+        clean_params = {k: (int(v) if isinstance(v, (np.integer,)) else
+                            float(v) if isinstance(v, (np.floating,)) else v)
+                        for k, v in best['params'].items()}
+        return best['model'], clean_params, test_score
+
+    return None, {}, -999
+
+
+def _random_tune_fallback(model_name, problem_type, param_grid,
+                          X_train, y_train, X_test, y_test, scoring):
+    """Fallback to RandomizedSearchCV when Optuna is not available."""
+    from sklearn.model_selection import RandomizedSearchCV
+    model = get_models(problem_type).get(model_name)
+    if model is None:
+        return None, {}, -999
+    search = RandomizedSearchCV(model, param_grid, n_iter=10, cv=3,
+                                scoring=scoring, random_state=42, n_jobs=-1)
+    search.fit(X_train, y_train)
+    y_pred = search.best_estimator_.predict(X_test)
+    if problem_type == 'classification':
+        test_score = round(float(accuracy_score(y_test, y_pred)), 4)
+    else:
+        test_score = round(float(r2_score(y_test, y_pred)), 4)
+    clean_params = {k: (int(v) if isinstance(v, (np.integer,)) else
+                        float(v) if isinstance(v, (np.floating,)) else v)
+                    for k, v in search.best_params_.items()}
+    return search.best_estimator_, clean_params, test_score

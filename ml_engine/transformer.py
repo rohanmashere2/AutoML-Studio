@@ -261,51 +261,76 @@ def _scale_features(X):
 
 
 def _handle_imbalance(X, y):
-    """Handle class imbalance using SMOTE if needed."""
-    from imblearn.over_sampling import SMOTE
+    """Handle class imbalance using the best available strategy."""
+    from imblearn.over_sampling import SMOTE, ADASYN, BorderlineSMOTE
+    from imblearn.under_sampling import RandomUnderSampler
     
     value_counts = y.value_counts()
     majority = value_counts.max()
     minority = value_counts.min()
     ratio = majority / max(minority, 1)
     
-    if ratio > 2.0 and len(y) > 50 and minority >= 6:
-        try:
-            k_neighbors = min(5, minority - 1)
-            smote = SMOTE(random_state=42, k_neighbors=k_neighbors)
-            X_resampled, y_resampled = smote.fit_resample(X, y)
-            
-            X = pd.DataFrame(X_resampled, columns=X.columns)
-            y = pd.Series(y_resampled, name=y.name)
-            
-            step = {
-                'name': 'Handle Class Imbalance',
-                'icon': '⚖️',
-                'description': f'Applied SMOTE (imbalance ratio was {ratio:.1f}:1). Rows: {len(value_counts.index)} → {len(y)}',
-                'count': len(y) - len(value_counts),
-                'original_distribution': value_counts.to_dict(),
-                'new_distribution': y.value_counts().to_dict(),
-                'imbalance_ratio': round(ratio, 2),
-                'applied': True,
-            }
-            return X, y, step, round(ratio, 2)
-        except Exception as e:
-            step = {
-                'name': 'Handle Class Imbalance',
-                'icon': '⚖️',
-                'description': f'SMOTE failed ({str(e)}). Will use class_weight instead during training.',
-                'count': 0,
-                'imbalance_ratio': round(ratio, 2),
-                'applied': False,
-            }
-            return X, y, step, round(ratio, 2)
-    else:
+    if ratio <= 2.0 or len(y) <= 50 or minority < 6:
         step = {
             'name': 'Handle Class Imbalance',
             'icon': '⚖️',
-            'description': f'Classes are balanced enough (ratio {ratio:.1f}:1). No resampling needed.' if ratio <= 2 else 'Insufficient samples for SMOTE.',
+            'description': f'Classes are balanced enough (ratio {ratio:.1f}:1). No resampling needed.' if ratio <= 2 else 'Insufficient samples for resampling.',
             'count': 0,
             'imbalance_ratio': round(ratio, 2),
             'applied': False,
         }
         return X, y, step, round(ratio, 2)
+    
+    # Auto-select strategy based on severity and dataset size
+    k_neighbors = min(5, minority - 1)
+    strategies = []
+    
+    # For extreme imbalance (>10:1) or very large datasets, try undersampling first
+    if ratio > 10 and len(y) > 5000:
+        strategies.append(('RandomUnderSampler', RandomUnderSampler(random_state=42)))
+    
+    # ADASYN for moderate-to-high imbalance (adapts to boundary regions)
+    if minority >= 10 and k_neighbors >= 2:
+        strategies.append(('ADASYN', ADASYN(random_state=42, n_neighbors=k_neighbors)))
+    
+    # BorderlineSMOTE for borderline-focused oversampling
+    if minority >= 10 and k_neighbors >= 2:
+        strategies.append(('BorderlineSMOTE', BorderlineSMOTE(random_state=42, k_neighbors=k_neighbors)))
+    
+    # Standard SMOTE as reliable fallback
+    strategies.append(('SMOTE', SMOTE(random_state=42, k_neighbors=k_neighbors)))
+    
+    # Try strategies in order, use first that succeeds
+    for strategy_name, sampler in strategies:
+        try:
+            X_resampled, y_resampled = sampler.fit_resample(X, y)
+            
+            X_out = pd.DataFrame(X_resampled, columns=X.columns)
+            y_out = pd.Series(y_resampled, name=y.name)
+            
+            step = {
+                'name': 'Handle Class Imbalance',
+                'icon': '⚖️',
+                'description': f'Applied {strategy_name} (imbalance ratio was {ratio:.1f}:1). Rows: {len(y)} → {len(y_out)}',
+                'count': abs(len(y_out) - len(y)),
+                'original_distribution': {str(k): int(v) for k, v in value_counts.items()},
+                'new_distribution': {str(k): int(v) for k, v in y_out.value_counts().items()},
+                'imbalance_ratio': round(ratio, 2),
+                'strategy': strategy_name,
+                'applied': True,
+            }
+            return X_out, y_out, step, round(ratio, 2)
+        except Exception:
+            continue
+    
+    # All strategies failed
+    step = {
+        'name': 'Handle Class Imbalance',
+        'icon': '⚖️',
+        'description': f'All resampling strategies failed (ratio {ratio:.1f}:1). Will use class_weight instead during training.',
+        'count': 0,
+        'imbalance_ratio': round(ratio, 2),
+        'applied': False,
+    }
+    return X, y, step, round(ratio, 2)
+

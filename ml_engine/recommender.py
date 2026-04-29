@@ -45,6 +45,18 @@ def generate_recommendations(profile, clean_report, transform_report, training_r
     # 7. General Performance Recommendations
     recommendations += _check_general_performance(best_score, problem_type, context)
     
+    # 8. Stacking Ensemble Suggestion
+    recommendations += _check_ensemble_opportunity(leaderboard, best_score, problem_type)
+    
+    # 9. CatBoost for categorical-heavy data
+    recommendations += _check_catboost_opportunity(profile, leaderboard)
+    
+    # 10. Feature Crossing / Polynomial
+    recommendations += _check_feature_crossing(feature_importance, context, best_score, problem_type)
+    
+    # 11. Calibration Check
+    recommendations += _check_calibration(training_results, problem_type)
+    
     # Sort by impact level (high first)
     impact_order = {'high': 0, 'medium': 1, 'low': 2}
     recommendations.sort(key=lambda x: impact_order.get(x.get('impact', 'low'), 3))
@@ -362,6 +374,132 @@ def _check_general_performance(best_score, problem_type, context):
             'category': 'data_quality',
             'icon': '📦',
             'action': {'regularization': True},
+        })
+    
+    return recs
+
+
+def _check_ensemble_opportunity(leaderboard, best_score, problem_type):
+    """Suggest stacking ensemble when top models are close in performance."""
+    recs = []
+    if len(leaderboard) < 3:
+        return recs
+    
+    valid = [e for e in leaderboard if e.get('primary_metric', -999) > -999]
+    if len(valid) < 3:
+        return recs
+    
+    top3 = valid[:3]
+    spread = top3[0]['primary_metric'] - top3[2]['primary_metric']
+    
+    # If top 3 are close, stacking often helps
+    if spread < 0.05 and best_score > 0.5:
+        recs.append({
+            'title': 'Stacking Ensemble Opportunity',
+            'description': f'Top 3 models are within {spread:.1%} of each other. A stacking ensemble combining their strengths could push accuracy further. Use the Ensemble Builder to auto-create one.',
+            'impact': 'high',
+            'category': 'model',
+            'icon': '🏗️',
+            'action': {'build_ensemble': True},
+        })
+    
+    # If best score is moderate, ensemble is worth trying
+    threshold = 0.8 if problem_type == 'classification' else 0.6
+    if best_score < threshold and len(valid) >= 3:
+        recs.append({
+            'title': 'Try Stacking Ensemble',
+            'description': f'Current best score ({best_score:.1%}) has room for improvement. Stacking ensembles typically add +1-3% by combining diverse model predictions.',
+            'impact': 'medium',
+            'category': 'model',
+            'icon': '🏗️',
+            'action': {'build_ensemble': True},
+        })
+    
+    return recs
+
+
+def _check_catboost_opportunity(profile, leaderboard):
+    """Suggest CatBoost for datasets with many categorical columns."""
+    recs = []
+    
+    col_types = profile.get('column_types', {})
+    cat_count = col_types.get('categorical', 0) + col_types.get('object', 0)
+    total = profile.get('n_cols', 1)
+    cat_ratio = cat_count / max(total, 1)
+    
+    catboost_in_lb = any(e['model'] == 'CatBoost' for e in leaderboard)
+    
+    if cat_ratio > 0.3 and not catboost_in_lb:
+        recs.append({
+            'title': 'CatBoost Recommended for Categorical Data',
+            'description': f'{cat_count} of {total} columns are categorical ({cat_ratio:.0%}). CatBoost handles categorical features natively without one-hot encoding, often outperforming XGBoost/LightGBM on such data.',
+            'impact': 'high',
+            'category': 'model',
+            'icon': '🐱',
+            'action': {'add_catboost': True},
+        })
+    
+    return recs
+
+
+def _check_feature_crossing(feature_importance, context, best_score, problem_type):
+    """Suggest automated feature crossing when features are weak."""
+    recs = []
+    n_features = context.get('n_features', 0)
+    
+    threshold = 0.75 if problem_type == 'classification' else 0.5
+    
+    if best_score < threshold and n_features < 15:
+        recs.append({
+            'title': 'Generate Feature Interactions',
+            'description': f'With {n_features} features and a best score of {best_score:.1%}, auto-generating feature crosses (A×B) could capture non-linear relationships the models are missing.',
+            'impact': 'high',
+            'category': 'features',
+            'icon': '✖️',
+            'action': {'feature_crossing': True, 'polynomial_features': True},
+        })
+    elif n_features > 5 and feature_importance:
+        # If top features carry most importance, crossing them may help
+        top2_imp = sum(f['importance'] for f in feature_importance[:2])
+        if top2_imp > 0.6:
+            recs.append({
+                'title': 'Cross Top Features',
+                'description': f'Top 2 features carry {top2_imp:.0%} of importance. Creating interactions between them may reveal hidden patterns.',
+                'impact': 'medium',
+                'category': 'features',
+                'icon': '✖️',
+                'action': {'feature_crossing': True},
+            })
+    
+    return recs
+
+
+def _check_calibration(training_results, problem_type):
+    """Check if model needs calibration."""
+    recs = []
+    if problem_type != 'classification':
+        return recs
+    
+    cal = training_results.get('calibration', {})
+    ece = cal.get('ece', 0)
+    
+    if ece > 0.1:
+        recs.append({
+            'title': 'Model is Poorly Calibrated',
+            'description': f'Expected Calibration Error (ECE) is {ece:.3f}. Predicted probabilities don\'t match actual outcomes. Apply Platt scaling or isotonic calibration for reliable confidence scores.',
+            'impact': 'high',
+            'category': 'calibration',
+            'icon': '🎯',
+            'action': {'calibrate': True},
+        })
+    elif ece > 0.05:
+        recs.append({
+            'title': 'Moderate Calibration Drift',
+            'description': f'ECE is {ece:.3f}. Model probabilities are slightly off. Auto-calibration was applied but manual review of the reliability diagram is recommended.',
+            'impact': 'medium',
+            'category': 'calibration',
+            'icon': '🎯',
+            'action': {'calibrate': True},
         })
     
     return recs

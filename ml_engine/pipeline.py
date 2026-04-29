@@ -11,6 +11,7 @@ model compression, data valuation, autonomous agent, chat, federated learning.
 import os
 import uuid
 import json
+import pickle
 import threading
 import numpy as np
 import pandas as pd
@@ -25,10 +26,11 @@ from ml_engine.explainer import explain_model, explain_single_row, whatif_analys
 from ml_engine.diagnostics import generate_diagnostics
 from ml_engine.timeseries_detector import detect_timeseries, extract_temporal_features, create_lag_features
 from ml_engine.timeseries_trainer import train_timeseries_models
-from ml_engine.deployer import predict_single, predict_batch, export_deployment_package
+from ml_engine.deployer import predict_single, predict_batch, export_deployment_package, prepare_single_row
 from ml_engine.monitor import compute_drift, generate_drift_report, detect_model_drift
 from ml_engine.experiment_store import ExperimentStore
 from ml_engine.report_generator import generate_html_report
+from ml_engine.unsupervised_report_generator import generate_unsupervised_html_report
 
 # New Tier 0-3 imports
 from ml_engine.universal_transformer import UniversalDataTransformer
@@ -53,6 +55,7 @@ from ml_engine.pipeline_builder import PipelineDAG
 from ml_engine.hyperopt_engine import auto_optimize
 from ml_engine.cleaning_advisor import generate_cleaning_suggestions, apply_suggestions
 from ml_engine.local_storage import save_project as _save_project, load_project as _load_project, list_projects as _list_projects, delete_project as _delete_project
+from ml_engine.b2_storage import upload_file
 
 
 class PipelineSession:
@@ -110,12 +113,17 @@ class PipelineSession:
         self.unsupervised_results = None
         self.fairness_report = None
         self.causal_graph = None
+        self.unsupervised_model_path = None
+        self.unsupervised_report_path = None
         self.is_unsupervised = False
         
         # Studio features
         self.progress_log = []
         self.cleaning_suggestions = None
         self.hyperopt_results = None
+        
+        # Dataset versioning / checkpoints
+        self._checkpoints = {}  # label -> (df_copy, metadata)
         
         # File paths
         self.upload_path = None
@@ -124,6 +132,39 @@ class PipelineSession:
     def update_progress(self, message, progress):
         self.progress_message = message
         self.progress = progress
+    
+    def save_checkpoint(self, label='auto'):
+        """Save a named snapshot of the current dataset."""
+        import time
+        df = self.transformed_df if self.transformed_df is not None else (
+            self.cleaned_df if self.cleaned_df is not None else self.original_df)
+        if df is not None:
+            self._checkpoints[label] = {
+                'df': df.copy(),
+                'timestamp': time.time(),
+                'shape': df.shape,
+                'step': self.current_step,
+            }
+        return list(self._checkpoints.keys())
+    
+    def restore_checkpoint(self, label):
+        """Restore dataset from a named checkpoint."""
+        if label not in self._checkpoints:
+            return {'error': f'Checkpoint "{label}" not found. Available: {list(self._checkpoints.keys())}'}
+        cp = self._checkpoints[label]
+        self.original_df = cp['df'].copy()
+        self.cleaned_df = None
+        self.transformed_df = None
+        self.current_step = 'upload'
+        return {'success': True, 'restored': label, 'shape': list(cp['shape'])}
+    
+    def list_checkpoints(self):
+        """Return metadata for all saved checkpoints."""
+        return [
+            {'label': k, 'shape': list(v['shape']), 'step': v['step'],
+             'timestamp': v['timestamp']}
+            for k, v in self._checkpoints.items()
+        ]
     
     def to_dict(self):
         return {
@@ -162,6 +203,17 @@ class PipelineManager:
     
     def get_session(self, session_id):
         return self.sessions.get(session_id)
+
+    def _b2_key(self, session, suffix):
+        return f"sessions/{session.session_id}/{suffix}"
+
+    def _upload_to_b2(self, session, local_path, key_suffix):
+        if not local_path or not os.path.exists(local_path):
+            return
+        try:
+            upload_file(self._b2_key(session, key_suffix), local_path)
+        except Exception:
+            pass
     
     def upload_and_profile(self, session_id, filepath, problem_statement):
         """Step 1: Upload file and profile the dataset."""
@@ -187,6 +239,7 @@ class PipelineManager:
             
             # Create experiment record
             dataset_name = os.path.basename(filepath)
+            self._upload_to_b2(session, filepath, f"uploads/{dataset_name}")
             session.experiment_id = self.experiment_store.create_experiment(
                 dataset_name=dataset_name,
                 target_column=session.profile.get('target_column', ''),
@@ -195,6 +248,9 @@ class PipelineManager:
                 n_cols=session.profile.get('n_cols', 0),
                 session_id=session_id,
             )
+
+            if session.experiment_id:
+                pass
             
             # Save profile to experiment
             self.experiment_store.save_step_result(
@@ -262,6 +318,10 @@ class PipelineManager:
                 # Save cleaned CSV
                 csv_path = os.path.join(session.output_dir, 'cleaned_data.csv')
                 session.transformed_df.to_csv(csv_path, index=False)
+
+                transformed_path = os.path.join(session.output_dir, 'transformed_data.csv')
+                session.transformed_df.to_csv(transformed_path, index=False)
+                self._upload_to_b2(session, transformed_path, 'data/transformed_data.csv')
                 
                 # Save to experiment
                 if session.experiment_id:
@@ -382,6 +442,27 @@ class PipelineManager:
                 except Exception:
                     pass
                 
+                # Auto-calibration (classification only)
+                session.update_progress('Running confidence calibration...', 88)
+                try:
+                    problem_type = session.profile.get('problem_type', 'classification')
+                    if problem_type == 'classification' and session.best_model is not None:
+                        from ml_engine.calibration_engine import compute_calibration, auto_calibrate
+                        cal = compute_calibration(session.best_model, session.X_test, session.y_test)
+                        session.training_results['calibration'] = cal
+                        # Auto-calibrate if ECE > 0.05
+                        if cal.get('ece', 0) > 0.05:
+                            cal_result = auto_calibrate(
+                                session.best_model, session.X_train, session.y_train,
+                                session.X_test, session.y_test, 'auto'
+                            )
+                            if cal_result.get('success') and cal_result.get('calibrated_model'):
+                                session.best_model = cal_result['calibrated_model']
+                                session.training_results['calibration']['auto_calibrated'] = True
+                                session.training_results['calibration']['calibration_method'] = cal_result.get('method', 'auto')
+                except Exception:
+                    pass
+                
                 # Generate recommendations
                 session.update_progress('Analyzing results for recommendations...', 90)
                 if not session.is_timeseries:
@@ -412,6 +493,18 @@ class PipelineManager:
                             entry.get('metrics', {}),
                             is_best=(entry['rank'] == 1)
                         )
+
+                best_model_path = session.training_results.get('best_model_path') if session.training_results else None
+                if not best_model_path:
+                    best_model_path = os.path.join(session.output_dir, 'best_model.pkl')
+                self._upload_to_b2(session, best_model_path, 'models/best_model.pkl')
+                
+                # Automatically generate and upload report
+                session.update_progress('Generating comprehensive report...', 95)
+                try:
+                    self.generate_report(session_id)
+                except Exception as e:
+                    pass
                 
                 session.update_progress('Training complete!', 100)
                 session.status = 'complete'
@@ -471,6 +564,18 @@ class PipelineManager:
                             'best_model': session.retrain_results.get('best_model', ''),
                         }
                     )
+
+                improved_path = session.retrain_results.get('best_model_path') if session.retrain_results else None
+                if not improved_path:
+                    improved_path = os.path.join(session.output_dir, 'improved_model.pkl')
+                self._upload_to_b2(session, improved_path, 'models/improved_model.pkl')
+                
+                # Regenerate report to reflect retrain results
+                session.update_progress('Updating comprehensive report...', 95)
+                try:
+                    self.generate_report(session_id)
+                except Exception as e:
+                    pass
                 
                 session.update_progress('Retraining complete!', 100)
                 session.status = 'complete'
@@ -490,6 +595,47 @@ class PipelineManager:
         }
     
     # ========== Phase 1: Explainability ==========
+
+    def _build_explainability_fallback(self, session):
+        """Fallback explainability using model-native feature importance when SHAP is unavailable."""
+        if not session or not session.training_results:
+            return None
+
+        fi = session.training_results.get('feature_importance')
+        if not fi:
+            return None
+
+        return {
+            'feature_importance': fi,
+            'global_importance': fi,
+            'shap_summary': 'SHAP unavailable; showing model feature importance fallback.',
+            'summary': {
+                'source': 'feature_importance_fallback',
+                'shap_available': False,
+                'n_features': len(fi),
+            },
+        }
+
+    def _normalize_explainability_payload(self, payload):
+        """Ensure backward-compatible keys consumed by multiple dashboard variants."""
+        if not isinstance(payload, dict):
+            return payload
+
+        if 'feature_importance' not in payload and 'global_importance' in payload:
+            payload['feature_importance'] = payload['global_importance']
+
+        if 'shap_summary' not in payload:
+            summary = payload.get('summary')
+            if isinstance(summary, dict):
+                n_features = summary.get('n_features')
+                n_samples = summary.get('n_samples_explained')
+                payload['shap_summary'] = (
+                    f"Explained {n_samples} samples across {n_features} features."
+                    if n_features is not None and n_samples is not None
+                    else 'SHAP explainability generated.'
+                )
+
+        return payload
     
     def get_explainability(self, session_id):
         """Get SHAP explainability data."""
@@ -497,8 +643,14 @@ class PipelineManager:
         if not session:
             return {'error': 'Session not found'}
         
-        if session.explainability:
-            return session.explainability
+        if session.explainability and 'error' not in session.explainability:
+            return self._normalize_explainability_payload(session.explainability)
+        
+        if session.explainability and 'error' in session.explainability:
+            fallback = self._build_explainability_fallback(session)
+            if fallback:
+                session.explainability = fallback
+                return self._normalize_explainability_payload(session.explainability)
         
         # Compute on demand
         if session.best_model and session.X_train is not None:
@@ -507,8 +659,17 @@ class PipelineManager:
                 session.best_model, session.X_train, session.X_test,
                 session.feature_names, problem_type
             )
-            return session.explainability
+            if 'error' in session.explainability:
+                fallback = self._build_explainability_fallback(session)
+                if fallback:
+                    session.explainability = fallback
+            return self._normalize_explainability_payload(session.explainability)
         
+        fallback = self._build_explainability_fallback(session)
+        if fallback:
+            session.explainability = fallback
+            return self._normalize_explainability_payload(session.explainability)
+
         return {'error': 'No trained model available for explanation'}
     
     def explain_row(self, session_id, row_index):
@@ -573,10 +734,34 @@ class PipelineManager:
         if session.best_model is None:
             return {'error': 'No trained model available'}
         
-        return predict_single(
+        result = predict_single(
             session.best_model, features, session.feature_names,
             session.transform_metadata
         )
+
+        if result.get('error'):
+            return result
+
+        if session.X_train is None or not session.feature_names:
+            return result
+
+        try:
+            row_df, _ = prepare_single_row(
+                features, session.feature_names, session.transform_metadata
+            )
+            local = explain_single_row(
+                session.best_model,
+                session.X_train,
+                row_df,
+                session.feature_names,
+                session.profile.get('problem_type', 'classification')
+            )
+            if local and not local.get('error'):
+                result['feature_contributions'] = local.get('contributions')
+        except Exception:
+            pass
+
+        return result
     
     def batch_predict(self, session_id, df):
         """Make batch predictions."""
@@ -671,6 +856,7 @@ class PipelineManager:
             return {'error': 'Session not found'}
         
         session_data = {
+            'session_id': session.session_id,
             'profile': session.profile,
             'clean_report': session.clean_report,
             'transform_report': session.transform_report,
@@ -678,12 +864,27 @@ class PipelineManager:
             'retrain_results': session.retrain_results,
             'explainability': session.explainability,
             'diagnostics': session.diagnostics,
+            'eda_report': session.eda_report,
+            'drift_report': session.drift_report,
+            'fairness_report': session.fairness_report,
+            'unsupervised_results': session.unsupervised_results,
+            'causal_graph': session.causal_graph,
         }
         
         if session_data['training_results'] and session.recommendations:
             session_data['training_results']['recommendations'] = session.recommendations
         
         report_path = generate_html_report(session_data, session.output_dir)
+        self._upload_to_b2(session, report_path, 'reports/automl_report.html')
+        if session.experiment_id:
+            try:
+                self.experiment_store.save_step_result(
+                    session.experiment_id,
+                    'report',
+                    {'report_path': report_path}
+                )
+            except Exception:
+                pass
         return {'report_path': report_path}
     
     # ========== Tier 0A: Universal Transform ==========
@@ -743,6 +944,106 @@ class PipelineManager:
                 results['topics'] = discover_topics(df[longest_col])
         
         session.unsupervised_results = results
+
+        if session.experiment_id:
+            clustering = results.get('clustering') or {}
+            anomaly = results.get('anomaly') or {}
+            dim_reduction_result = results.get('dim_reduction') or {}
+            association_result = results.get('association') or {}
+            topics_result = results.get('topics') or {}
+
+            unsupervised_summary = {
+                'method': method,
+                'clustering': {
+                    'best_algorithm': clustering.get('best_algorithm'),
+                    'best_silhouette': clustering.get('best_silhouette'),
+                    'optimal_k': clustering.get('optimal_k'),
+                },
+                'anomaly': {
+                    'n_anomalies': anomaly.get('n_anomalies'),
+                    'anomaly_pct': anomaly.get('anomaly_pct'),
+                },
+                'dim_reduction': {
+                    'method': dim_reduction_result.get('method'),
+                },
+                'association_rules': len(association_result.get('rules') or []),
+                'topics': len(topics_result.get('topics') or []),
+            }
+
+            self.experiment_store.save_step_result(
+                session.experiment_id,
+                'unsupervised',
+                {
+                    'summary': unsupervised_summary,
+                    'results': results,
+                    'dataset_path': 'data/unsupervised_dataset.csv',
+                    'model_path': 'models/unsupervised_model.pkl',
+                    'report_path': 'reports/unsupervised_report.html',
+                }
+            )
+
+            update_kwargs = {
+                'status': 'complete',
+                'notes': 'Unsupervised analysis complete',
+            }
+            if isinstance(clustering.get('best_silhouette'), (int, float)):
+                update_kwargs['best_model'] = clustering.get('best_algorithm') or ''
+                update_kwargs['best_score'] = float(clustering.get('best_silhouette'))
+
+            self.experiment_store.update_experiment(session.experiment_id, **update_kwargs)
+            self.experiment_store.save_model_result(
+                session.experiment_id,
+                clustering.get('best_algorithm') or 'Unsupervised Analysis',
+                'unsupervised',
+                float(clustering.get('best_silhouette')) if isinstance(clustering.get('best_silhouette'), (int, float)) else 0,
+                {
+                    'summary': unsupervised_summary,
+                    'algorithm_scores': clustering.get('algorithms', {}),
+                },
+                is_best=True,
+                hyperparameters={'method': method},
+                feature_importance=[]
+            )
+
+        # Save dataset used for unsupervised run and upload to B2.
+        try:
+            unsup_csv_path = os.path.join(session.output_dir, 'unsupervised_dataset.csv')
+            df.to_csv(unsup_csv_path, index=False)
+            self._upload_to_b2(session, unsup_csv_path, 'data/unsupervised_dataset.csv')
+        except Exception:
+            pass
+
+        # Save an unsupervised artifact so users can download the trained unsupervised model bundle.
+        try:
+            model_artifact = {
+                'session_id': session.session_id,
+                'method': method,
+                'results': results,
+                'feature_columns': numeric.columns.tolist(),
+            }
+            unsup_model_path = os.path.join(session.output_dir, 'unsupervised_model.pkl')
+            with open(unsup_model_path, 'wb') as f:
+                pickle.dump(model_artifact, f)
+            session.unsupervised_model_path = unsup_model_path
+            self._upload_to_b2(session, unsup_model_path, 'models/unsupervised_model.pkl')
+        except Exception:
+            pass
+
+        # Generate unsupervised-only report and upload to B2.
+        try:
+            unsup_report_path = generate_unsupervised_html_report(
+                {
+                    'session_id': session.session_id,
+                    'profile': session.profile,
+                    'unsupervised_results': results,
+                },
+                session.output_dir,
+            )
+            session.unsupervised_report_path = unsup_report_path
+            self._upload_to_b2(session, unsup_report_path, 'reports/unsupervised_report.html')
+        except Exception:
+            pass
+
         return results
     
     # ========== Tier 1: AutoEDA ==========
@@ -927,23 +1228,27 @@ class PipelineManager:
         result = session.to_dict()
         
         if session.status == 'complete':
-            if session.current_step == 'clean' and session.profile:
+            # Always expose profile and step outputs once complete, regardless of current_step
+            # (e.g., current_step can be 'tune' after optimization).
+            if session.profile:
                 result['profile'] = session.profile
-            
-            if session.current_step == 'train' and session.clean_report:
+
+            if session.clean_report:
                 result['clean_report'] = session.clean_report
+            if session.transform_report:
                 result['transform_report'] = session.transform_report
-            
-            if session.current_step == 'results' and session.training_results:
+
+            if session.training_results:
                 result['training_results'] = _serialize_training_results(session.training_results)
+            if session.recommendations:
                 result['recommendations'] = session.recommendations
-                
-                if session.explainability and 'error' not in session.explainability:
-                    result['has_explainability'] = True
-                if session.diagnostics:
-                    result['has_diagnostics'] = True
-            
-            if session.current_step == 'retrain_done' and session.retrain_results:
+
+            if session.explainability and 'error' not in session.explainability:
+                result['has_explainability'] = True
+            if session.diagnostics:
+                result['has_diagnostics'] = True
+
+            if session.retrain_results:
                 result['retrain_results'] = session.retrain_results
         
         
@@ -1011,6 +1316,7 @@ class PipelineManager:
             return {'error': 'No trained model available. Train models first.'}
         
         problem_type = session.profile.get('problem_type', 'classification')
+        session.current_step = 'tune'
         
         try:
             result = auto_optimize(

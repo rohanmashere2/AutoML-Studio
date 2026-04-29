@@ -1,6 +1,6 @@
 """
-LLM Chat Agent — OpenAI GPT-powered natural language interface for data science.
-Uses OpenAI API (gpt-4o-mini) for intelligent responses with full session context.
+LLM Chat Agent — Gemini-powered natural language interface for data science.
+Uses Google Gemini API (gemini-2.5-flash) for intelligent responses with full session context.
 Falls back to local flan-t5-small, then rule-based intent detection.
 Features: conversation memory per session, system prompt with leaderboard/features/drift.
 """
@@ -45,7 +45,7 @@ class ConversationMemory:
 # ── Main Agent ────────────────────────────────────────────────
 
 class AutoMLChatAgent:
-    """Chat agent that uses OpenAI GPT for intelligent, context-aware responses."""
+    """Chat agent that uses Google Gemini for intelligent, context-aware responses."""
 
     # Class-level shared local pipeline (persists across instances to save RAM)
     _shared_pipeline = None
@@ -53,8 +53,9 @@ class AutoMLChatAgent:
     def __init__(self, pipeline_manager=None):
         self.pm = pipeline_manager
         self.conversations = {}  # session_id -> ConversationMemory
-        self.llm_provider = None  # 'openai' | 'local' | 'rules'
+        self.llm_provider = None  # 'gemini' | 'openai' | 'local' | 'rules'
         self.openai_client = None
+        self.gemini_model = None
         self.llm_available = False
         self._init_llm_provider()
 
@@ -109,21 +110,54 @@ class AutoMLChatAgent:
 
     def _init_llm_provider(self):
         """Initialize the best available LLM provider."""
-        # Try OpenAI first
-        api_key = os.environ.get('OPENAI_API_KEY', '')
-        if api_key and api_key.startswith('sk-'):
-            try:
-                from openai import OpenAI
-                self.openai_client = OpenAI(api_key=api_key)
-                self.llm_provider = 'openai'
-                self.llm_available = True
-                print("✅ LLM Agent: OpenAI GPT-4o-mini ready")
+        # Try Gemini first
+        gemini_key = os.getenv('GEMINI_API_KEY')
+        if gemini_key:
+            self._init_gemini(gemini_key)
+            if self.llm_provider == 'gemini':
                 return
-            except Exception as e:
-                print(f"⚠️ OpenAI init failed: {e}")
 
-        # Fallback to local flan-t5-small
+        # Try OpenAI next
+        openai_key = os.getenv('OPENAI_API_KEY')
+        if openai_key and openai_key.startswith('sk-'):
+            self._init_openai(openai_key)
+            if self.llm_provider == 'openai':
+                return
+
+        # Fall back to local LLM
         self._init_local_llm()
+
+    def _init_gemini(self, api_key):
+        print(f"[DEBUG] Attempting Gemini init with key: {api_key[:8]}...")
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            # Test with a simple call before committing
+            self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+            # Lightweight validation
+            test = self.gemini_model.generate_content("hi")
+            print(f"[DEBUG] Gemini test response: {test.text[:30]}")
+            self.llm_provider = 'gemini'
+            self.llm_available = True
+            print("✅ LLM Agent: Gemini 2.5 Flash ready")
+        except ImportError:
+            print("❌ google-generativeai not installed. Run: pip install google-generativeai")
+        except Exception as e:
+            print(f"❌ Gemini init failed: {type(e).__name__}: {e}")
+
+    def _init_openai(self, api_key):
+        """Initialize OpenAI client."""
+        try:
+            import openai
+            self.openai_client = openai.OpenAI(api_key=api_key)
+            self.openai_client.models.list()  # validate key
+            self.llm_provider = 'openai'
+            self.llm_available = True
+            print("✅ LLM Agent: OpenAI GPT-4o-mini ready")
+        except Exception as e:
+            print(f"⚠️ OpenAI init failed: {e}")
+            self.llm_provider = None
+            self.llm_available = False
 
     def _init_local_llm(self):
         """Initialize Local LLM using huggingface transformers."""
@@ -146,11 +180,14 @@ class AutoMLChatAgent:
 
     @classmethod
     def set_api_key(cls, api_key):
-        """Update the OpenAI API key at runtime."""
+        """Update the Gemini or OpenAI API key at runtime."""
         if api_key and api_key.startswith('sk-'):
             os.environ['OPENAI_API_KEY'] = api_key
             return {'success': True, 'message': 'OpenAI API key updated. Restart chat to activate.'}
-        return {'success': False, 'message': 'Invalid API key format.'}
+        elif api_key:
+            os.environ['GEMINI_API_KEY'] = api_key
+            return {'success': True, 'message': 'Gemini API key updated. Restart chat to activate.'}
+        return {'success': False, 'message': 'Invalid API key.'}
 
     # ── Main Chat Entry ───────────────────────────────────────
 
@@ -165,7 +202,9 @@ class AutoMLChatAgent:
         memory.add_user_message(message)
 
         # Route to best available provider
-        if self.llm_provider == 'openai':
+        if self.llm_provider == 'gemini':
+            response = self._gemini_chat(message, session_data, memory)
+        elif self.llm_provider == 'openai':
             response = self._openai_chat(message, session_data, memory)
         elif self.llm_provider == 'local' and self.llm_available:
             response = self._local_llm_chat(message, session_data)
@@ -184,6 +223,39 @@ class AutoMLChatAgent:
             'powered_by': self.llm_provider,
         }
 
+    # ── Gemini Chat ──────────────────────────────────────────
+
+    def _gemini_chat(self, message, session_data, memory):
+        """Use Google Gemini 1.5 Flash for intelligent, context-aware responses."""
+        try:
+            system_prompt = self._build_system_prompt(session_data)
+
+            # Build conversation history in Gemini format
+            history = []
+            for m in memory.get_history()[:-1][-16:]:
+                role = 'user' if m['role'] == 'user' else 'model'
+                history.append({'role': role, 'parts': [m['content']]})
+
+            chat = self.gemini_model.start_chat(history=history)
+
+            # Prepend system prompt to the first/current user message
+            full_message = f"{system_prompt}\n\nUser: {message}"
+            response = chat.send_message(full_message)
+
+            return {
+                'text': response.text,
+                'intent': 'gemini',
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            # Fallback to rule-based on error
+            intent = self._classify_intent(message)
+            handler = self.intents.get(intent, {}).get('handler', self._handle_unknown)
+            result = handler(message, session_data)
+            result['text'] = f"⚡ *Gemini API call failed ({error_msg[:80]}) — using smart fallback:*\n\n" + result['text']
+            return result
+
     # ── OpenAI GPT Chat ──────────────────────────────────────
 
     def _openai_chat(self, message, session_data, memory):
@@ -194,7 +266,6 @@ class AutoMLChatAgent:
 
             # Add conversation history (last N messages)
             history = memory.get_history()
-            # Include up to 16 history messages (excluding the current one we just added)
             if len(history) > 1:
                 messages.extend(history[:-1][-16:])
 
@@ -217,7 +288,6 @@ class AutoMLChatAgent:
 
         except Exception as e:
             error_msg = str(e)
-            # Fallback to rule-based on error
             intent = self._classify_intent(message)
             handler = self.intents.get(intent, {}).get('handler', self._handle_unknown)
             result = handler(message, session_data)
@@ -506,6 +576,7 @@ class AutoMLChatAgent:
 
     def _handle_help(self, message, session_data):
         powered = {
+            'gemini': '🧠 **Powered by Google Gemini 1.5 Flash** (with conversation memory)',
             'openai': '🧠 **Powered by OpenAI GPT-4o-mini** (with conversation memory)',
             'local': '🤖 **Powered by Local LLM (Flan-T5)**',
             'rules': '💬 **Rule-based assistant**',
@@ -515,6 +586,7 @@ class AutoMLChatAgent:
 
     def _handle_greeting(self, message, session_data):
         provider_msg = {
+            'gemini': "I'm powered by **Google Gemini 1.5 Flash** with full context of your current session.",
             'openai': "I'm powered by **GPT-4o-mini** with full context of your current session.",
             'local': "I'm using a **local AI model** for privacy-first responses.",
             'rules': "I'm using **pattern matching** to help you navigate the platform.",
@@ -523,6 +595,8 @@ class AutoMLChatAgent:
         return {'text': f'👋 **Hello!** I am the AutoML Studio AI Assistant.\n\n{provider_msg}\n\nI can help you analyze your data, find correlations, explain models, and guide your ML pipeline. Try uploading a dataset and asking me: *"Show dataset summary"* or *"What correlates with the target?"*\n\nType **"help"** to see everything I can do!'}
 
     def _handle_unknown(self, message, session_data):
+        if self.llm_provider == 'gemini':
+            return {'text': '🤔 Let me think about that... (processing with Gemini)'}
         if self.llm_provider == 'openai':
             return {'text': '🤔 Let me think about that... (processing with GPT)'}
         if self.llm_available:

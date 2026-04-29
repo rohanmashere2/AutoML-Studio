@@ -199,8 +199,13 @@ def _detect_target_column(df, problem_statement):
 
 
 def _detect_problem_type(df, target_col, problem_statement):
-    """Auto-detect whether this is a classification or regression problem."""
+    """Auto-detect whether this is a classification, regression, or multi-label problem."""
     problem_lower = problem_statement.lower()
+    
+    # Check for explicit multi-label keywords
+    multilabel_keywords = ['multi-label', 'multilabel', 'multi label', 'tagging', 'tags', 'multiple labels']
+    if any(kw in problem_lower for kw in multilabel_keywords):
+        return 'multilabel'
     
     # Strategy 1: Check problem statement keywords
     clf_score = sum(1 for kw in CLASSIFICATION_KEYWORDS if kw in problem_lower)
@@ -215,6 +220,13 @@ def _detect_problem_type(df, target_col, problem_statement):
     if target_col and target_col in df.columns:
         target = df[target_col]
         n_unique = target.nunique()
+        
+        # Multi-label detection: check for pipe/comma-separated values
+        if target.dtype == 'object':
+            sample = target.dropna().head(100).astype(str)
+            delimited = sample.str.contains(r'[|,;]', regex=True).mean()
+            if delimited > 0.3:
+                return 'multilabel'
         
         # If target is object/string type -> classification
         if target.dtype == 'object':
@@ -235,3 +247,4 @@ def _detect_problem_type(df, target_col, problem_statement):
         return 'classification'
     
     return 'classification'  # Default
+

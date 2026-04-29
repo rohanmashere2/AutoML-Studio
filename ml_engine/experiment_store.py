@@ -8,7 +8,17 @@ import os
 import json
 import sqlite3
 import uuid
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+try:
+    from ml_engine.firebase_sync import get_best_score as firebase_get_best_score, save_best_score as firebase_save_best_score
+except Exception as e:
+    logger.warning(f"Firebase sync import failed: {e}")
+    firebase_get_best_score = None
+    firebase_save_best_score = None
 
 
 DB_NAME = 'automl_experiments.db'
@@ -162,6 +172,15 @@ class ExperimentStore:
                 values
             )
 
+        if firebase_save_best_score and ('best_score' in updates or 'best_model' in updates):
+            logger.info(f"Syncing to Firebase: {exp_id} best_score={updates.get('best_score')}")
+            result = firebase_save_best_score(
+                exp_id,
+                updates.get('best_score'),
+                updates.get('best_model')
+            )
+            logger.info(f"Firebase sync result: {result}")
+
     def save_step_result(self, exp_id, step, result_data):
         """Save a pipeline step result."""
         now = datetime.utcnow().isoformat()
@@ -227,6 +246,12 @@ class ExperimentStore:
             exp = dict(row)
             exp['tags'] = json.loads(exp.get('tags', '[]'))
 
+            if firebase_get_best_score:
+                firebase_score = firebase_get_best_score(exp_id)
+                exp['firebase_best_score'] = firebase_score
+                if firebase_score is not None:
+                    exp['best_score'] = firebase_score
+
             # Get step results
             results = conn.execute(
                 'SELECT step, result_data, created_at FROM experiment_results WHERE experiment_id = ? ORDER BY created_at',
@@ -256,6 +281,27 @@ class ExperimentStore:
             ]
 
             return exp
+
+    def get_experiment_by_session_id(self, session_id):
+        """Get the most recent experiment associated with a session id."""
+        with self._connect() as conn:
+            row = conn.execute(
+                'SELECT * FROM experiments WHERE session_id = ? ORDER BY created_at DESC LIMIT 1',
+                (session_id,)
+            ).fetchone()
+
+        if not row:
+            return None
+
+        exp = dict(row)
+        exp['tags'] = json.loads(exp.get('tags', '[]'))
+
+        if firebase_get_best_score:
+            firebase_score = firebase_get_best_score(exp['id'])
+            exp['firebase_best_score'] = firebase_score
+            if firebase_score is not None:
+                exp['best_score'] = firebase_score
+        return exp
 
     def list_experiments(self, limit=50, offset=0, search=None, tag=None,
                          sort_by='created_at', sort_order='desc'):
@@ -297,6 +343,11 @@ class ExperimentStore:
         for row in rows:
             exp = dict(row)
             exp['tags'] = json.loads(exp.get('tags', '[]'))
+            if firebase_get_best_score:
+                firebase_score = firebase_get_best_score(exp['id'])
+                exp['firebase_best_score'] = firebase_score
+                if firebase_score is not None:
+                    exp['best_score'] = firebase_score
             experiments.append(exp)
 
         return {

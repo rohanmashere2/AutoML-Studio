@@ -14,13 +14,21 @@ from werkzeug.utils import secure_filename
 import pandas as pd
 import numpy as np
 import time
-
+from ml_engine.decision_engine import DecisionEngine
 from ml_engine.pipeline import PipelineManager
 from ml_engine.profiler import read_dataset
+from ml_engine.b2_storage import (
+    upload_bytes,
+    upload_file,
+    generate_download_url,
+    key_exists,
+    list_prefix
+)
+from ml_engine.unsupervised_report_generator import generate_unsupervised_html_report
 
 app = Flask(__name__)
 CORS(app)
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max
+app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024 * 1024  # 1GB max
 
 # Custom JSON encoder for numpy types
 from flask.json.provider import DefaultJSONProvider
@@ -39,8 +47,10 @@ class NumpyJSONProvider(DefaultJSONProvider):
 app.json_provider_class = NumpyJSONProvider
 app.json = NumpyJSONProvider(app)
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), 'uploads')
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), 'outputs')
+import tempfile
+
+UPLOAD_DIR = os.path.join(tempfile.gettempdir(), 'automl_uploads')
+OUTPUT_DIR = os.path.join(tempfile.gettempdir(), 'automl_outputs')
 
 pipeline_manager = PipelineManager(UPLOAD_DIR, OUTPUT_DIR)
 
@@ -53,15 +63,65 @@ def _allowed_file(filename):
 
 
 @app.route('/')
-def index():
-    """Serve the main dashboard UI."""
-    return render_template('index.html')
+def home():
+    """Redirect root to login."""
+    from flask import redirect, url_for
+    return redirect(url_for('login'))
 
+@app.route('/login')
+def login():
+    """Serve the login page."""
+    return render_template('login.html')
 
 @app.route('/dashboard')
 def dashboard():
     """Serve the project overview dashboard."""
     return render_template('dashboard.html')
+
+@app.route('/profile')
+def profile():
+    """Serve the logged-in user profile page."""
+    return render_template('profile.html')
+
+import pandas as pd
+from io import BytesIO
+
+@app.route('/api/preview-columns', methods=['POST'])
+def preview_columns():
+    """Extract columns from uploaded file for dropdown selection."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+        
+    try:
+        ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+        columns = []
+        
+        file_bytes = file.read()
+        buffer = BytesIO(file_bytes)
+        
+        if ext == 'csv':
+            df = pd.read_csv(buffer, nrows=0)
+            columns = df.columns.tolist()
+        elif ext in ['xlsx', 'xls']:
+            df = pd.read_excel(buffer, nrows=0)
+            columns = df.columns.tolist()
+        elif ext == 'parquet':
+            df = pd.read_parquet(buffer)
+            columns = df.columns.tolist()
+        elif ext == 'json':
+            df = pd.read_json(buffer)
+            columns = df.columns.tolist()
+        else:
+            return jsonify({'error': 'Unsupported format'}), 400
+            
+        file.seek(0)
+        return jsonify({'columns': columns})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 
 # ==============================================================================
@@ -96,6 +156,118 @@ def upload():
     
     return jsonify(result)
 
+@app.route("/api/decision/<session_id>")
+def decision(session_id):
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    # DecisionEngine expects a dict-style payload.
+    session_data = {
+        'training_results': session.training_results or {},
+        'drift': session.drift_report or {},
+        'profile': session.profile or {},
+    }
+    engine = DecisionEngine()
+    return jsonify(engine.analyze(session_data))
+
+
+
+
+
+@app.route('/api/download/<session_id>/<file_type>')
+def api_download(session_id, file_type):
+    from flask import request
+    filename = request.args.get('filename')
+    session = pipeline_manager.get_session(session_id)
+    exp = None
+
+    if session and getattr(session, 'experiment_id', None):
+        exp = pipeline_manager.experiment_store.get_experiment(session.experiment_id)
+    if not exp:
+        exp = pipeline_manager.experiment_store.get_experiment(session_id)
+
+    if not filename and file_type == 'csv':
+        if session and getattr(session, 'upload_path', None):
+            filename = os.path.basename(session.upload_path)
+        elif exp:
+            filename = exp.get('dataset_name')
+
+    candidate_keys = []
+    if file_type == 'csv':
+        if filename:
+            candidate_keys.append(f"sessions/{session_id}/uploads/{filename}")
+            candidate_keys.append(f"sessions/{session_id}/uploads/{session_id}_{filename}")
+        try:
+            uploads_session = list_prefix(f"sessions/{session_id}/uploads/")
+            if uploads_session:
+                candidate_keys.extend(uploads_session)
+        except Exception:
+            pass
+    elif file_type == 'transformed':
+        candidate_keys.append(f"sessions/{session_id}/data/transformed_data.csv")
+    elif file_type == 'model':
+        candidate_keys.append(f"sessions/{session_id}/models/best_model.pkl")
+    elif file_type == 'report':
+        candidate_keys.append(f"sessions/{session_id}/reports/automl_report.html")
+
+    key = next((candidate for candidate in candidate_keys if key_exists(candidate)), None)
+
+    if not key:
+
+        return jsonify({
+            "error": "File not found in Cloud Storage"
+        }), 400
+
+    try:
+
+        url = generate_download_url(key)
+
+        return jsonify({
+            "success": True,
+            "url": url
+        })
+
+    except Exception as e:
+
+        return jsonify({
+            "error": str(e)
+        }), 500
+
+
+@app.route("/api/auto-run/<session_id>", methods=["POST"])
+def auto_run(session_id):
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    # Step 1: start clean/transform. Training should be triggered after clean completes.
+    result = pipeline_manager.clean_and_transform(session_id)
+    if 'error' in result:
+        return jsonify(result), 400
+
+    return jsonify({
+        'success': True,
+        'status': 'started',
+        'message': 'Auto-run started. Poll /api/status until current_step is train, then call /api/train.',
+    })
+
+
+@app.route("/api/export/model/<session_id>")
+def export_model(session_id):
+    import joblib
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    if session.best_model is None:
+        return jsonify({'error': 'No trained model available'}), 400
+
+    import tempfile
+    export_dir = os.path.join(tempfile.gettempdir(), 'automl_exports')
+    os.makedirs(export_dir, exist_ok=True)
+    path = os.path.join(export_dir, f"{session_id}.pkl")
+    joblib.dump(session.best_model, path)
+    return send_file(path, as_attachment=True)
 
 @app.route('/api/update-target', methods=['POST'])
 def update_target():
@@ -164,19 +336,61 @@ def train():
 
 @app.route('/api/retrain', methods=['POST'])
 def retrain():
-    """Step 4: Retrain with recommendations."""
-    data = request.json
+    """Retrain models applying all recommendations."""
+    data = request.get_json()
     session_id = data.get('session_id')
-    
     if not session_id:
         return jsonify({'error': 'Session ID required'}), 400
-    
-    result = pipeline_manager.retrain(session_id)
-    
-    if 'error' in result:
-        return jsonify(result), 400
-    
-    return jsonify(result)
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    if not session.training_results:
+        return jsonify({'error': 'No training results to improve upon'}), 400
+    if not session.recommendations:
+        return jsonify({'error': 'No recommendations available'}), 400
+
+    from ml_engine.retrainer import retrain_with_recommendations
+    try:
+        df = session.transformed_df if session.transformed_df is not None else session.cleaned_df
+        if df is None:
+            return jsonify({'error': 'No transformed data available'}), 400
+
+        result = retrain_with_recommendations(
+            df.copy(),
+            session.profile or {},
+            session.transform_metadata or {},
+            session.recommendations,
+            session.training_results,
+            session.output_dir,
+        )
+
+        if 'error' in result:
+            return jsonify(result), 400
+
+        session.retrain_results = result
+
+        # Update best model if improved
+        ctx = result.get('training_context', {})
+        trained = ctx.get('trained_models', {})
+        best_name = result.get('best_model')
+        if best_name and best_name in trained:
+            session.best_model = trained[best_name]
+            session.trained_models = trained
+
+        return jsonify({
+            'success': True,
+            'best_model': result.get('best_model'),
+            'best_score': result.get('best_score'),
+            'original_best_score': result.get('original_best_score'),
+            'improvement': result.get('improvement'),
+            'improvement_pct': result.get('improvement_pct'),
+            'leaderboard': result.get('leaderboard', []),
+            'retrain_report': result.get('retrain_report', {}),
+            'applied_recommendations': result.get('applied_recommendations', []),
+            'feature_changes': result.get('feature_changes', []),
+        })
+    except Exception as e:
+        return jsonify({'error': f'Retrain failed: {str(e)}'}), 500
 
 
 # ==============================================================================
@@ -237,6 +451,24 @@ def download_improved_model(session_id):
 
 
 # ==============================================================================
+# RETRAIN & RECOMMENDATIONS
+# ==============================================================================
+
+@app.route('/api/recommendations/<session_id>')
+def get_recommendations(session_id):
+    """Get recommendations for the current session."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    if not session.recommendations:
+        return jsonify({'recommendations': [], 'message': 'No recommendations yet. Train a model first.'})
+    return jsonify({'recommendations': session.recommendations})
+
+
+
+
+
+# ==============================================================================
 # PHASE 1: EXPLAINABILITY & DIAGNOSTICS
 # ==============================================================================
 
@@ -245,7 +477,8 @@ def get_explainability(session_id):
     """Get SHAP-based model explanations."""
     result = pipeline_manager.get_explainability(session_id)
     if 'error' in result:
-        return jsonify(result), 400
+        status_code = 404 if result.get('error') == 'Session not found' else 400
+        return jsonify(result), status_code
     return jsonify(result)
 
 
@@ -254,7 +487,8 @@ def explain_row(session_id, row_index):
     """Get local explanation for a specific test row."""
     result = pipeline_manager.explain_row(session_id, row_index)
     if 'error' in result:
-        return jsonify(result), 400
+        status_code = 404 if result.get('error') == 'Session not found' else 400
+        return jsonify(result), status_code
     return jsonify(result)
 
 
@@ -271,7 +505,8 @@ def whatif(session_id):
     
     result = pipeline_manager.run_whatif(session_id, row_index, feature_name, new_value)
     if 'error' in result:
-        return jsonify(result), 400
+        status_code = 404 if result.get('error') == 'Session not found' else 400
+        return jsonify(result), status_code
     return jsonify(result)
 
 
@@ -280,7 +515,8 @@ def get_diagnostics(session_id):
     """Get advanced model diagnostics (ROC, residuals, learning curves)."""
     result = pipeline_manager.get_diagnostics(session_id)
     if 'error' in result:
-        return jsonify(result), 400
+        status_code = 404 if result.get('error') == 'Session not found' else 400
+        return jsonify(result), status_code
     return jsonify(result)
 
 
@@ -297,6 +533,11 @@ def predict(session_id):
     
     result = pipeline_manager.predict(session_id, data)
     if 'error' in result:
+        err = str(result.get('error', ''))
+        if err == 'Session not found':
+            return jsonify(result), 404
+        if err == 'No trained model available':
+            return jsonify(result), 409
         return jsonify(result), 400
     return jsonify(result)
 
@@ -418,6 +659,8 @@ def get_experiment(exp_id):
     """Get experiment details."""
     result = pipeline_manager.get_experiment(exp_id)
     if not result:
+        result = pipeline_manager.experiment_store.get_experiment_by_session_id(exp_id)
+    if not result:
         return jsonify({'error': 'Experiment not found'}), 404
     return jsonify(result)
 
@@ -516,6 +759,159 @@ def unsupervised_analysis(session_id):
     data = request.get_json() or {}
     method = data.get('method', 'all')
     result = pipeline_manager.run_unsupervised(session_id, method)
+    return jsonify(result)
+
+
+@app.route('/api/unsupervised/download-dataset/<session_id>')
+def download_unsupervised_dataset(session_id):
+    """Download the dataset used for unsupervised analysis."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    df = session.transformed_df if session.transformed_df is not None else (
+        session.cleaned_df if session.cleaned_df is not None else session.original_df
+    )
+    if df is None:
+        return jsonify({'error': 'No dataset available'}), 404
+
+    dataset_path = os.path.join(session.output_dir, 'unsupervised_dataset.csv')
+    df.to_csv(dataset_path, index=False)
+    return send_file(dataset_path, as_attachment=True, download_name='unsupervised_dataset.csv')
+
+
+@app.route('/api/unsupervised/download-model/<session_id>')
+def download_unsupervised_model(session_id):
+    """Download the unsupervised model artifact."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    model_path = session.unsupervised_model_path or os.path.join(session.output_dir, 'unsupervised_model.pkl')
+    if not os.path.exists(model_path):
+        return jsonify({'error': 'Unsupervised model not found. Run unsupervised analysis first.'}), 404
+
+    return send_file(model_path, as_attachment=True, download_name='unsupervised_model.pkl')
+
+
+@app.route('/api/unsupervised/report/<session_id>')
+def generate_unsupervised_report(session_id):
+    """Generate and download unsupervised-only HTML report."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    if not session.unsupervised_results:
+        return jsonify({'error': 'No unsupervised results found. Run unsupervised analysis first.'}), 400
+
+    session_data = {
+        'session_id': session.session_id,
+        'profile': session.profile,
+        'unsupervised_results': session.unsupervised_results,
+    }
+
+    report_path = generate_unsupervised_html_report(session_data, session.output_dir)
+    if report_path and os.path.exists(report_path):
+        return send_file(report_path, as_attachment=True, download_name='unsupervised_report.html')
+
+    return jsonify({'error': 'Unsupervised report generation failed'}), 500
+
+
+# ==============================================================================
+# VISUALIZATION DATA
+# ==============================================================================
+
+@app.route('/api/viz-data/<session_id>')
+def viz_data(session_id):
+    """Return data needed for visualization charts (histogram, box, scatter, heatmap, pair, bar)."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    # Prefer transformed data, fallback to cleaned, then original
+    df = session.transformed_df if session.transformed_df is not None else (
+        session.cleaned_df if session.cleaned_df is not None else session.original_df
+    )
+    if df is None:
+        return jsonify({'error': 'No dataset loaded'}), 400
+
+    target = session.profile.get('target_column') if session.profile else None
+    numeric_cols = df.select_dtypes(include='number').columns.tolist()
+    cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+
+    result = {
+        'numeric_columns': numeric_cols,
+        'categorical_columns': cat_cols,
+        'n_rows': len(df),
+        'target': target,
+    }
+
+    # Histogram data for each numeric column (binned)
+    histograms = {}
+    for col in numeric_cols[:20]:
+        try:
+            vals = df[col].dropna()
+            if len(vals) == 0:
+                continue
+            counts, edges = np.histogram(vals, bins=min(30, max(5, len(vals) // 10)))
+            histograms[col] = {
+                'counts': counts.tolist(),
+                'edges': [round(float(e), 4) for e in edges],
+            }
+        except Exception:
+            pass
+    result['histograms'] = histograms
+
+    # Box plot data for each numeric column
+    box_plots = {}
+    for col in numeric_cols[:20]:
+        try:
+            vals = df[col].dropna()
+            if len(vals) == 0:
+                continue
+            q1, median, q3 = float(vals.quantile(0.25)), float(vals.median()), float(vals.quantile(0.75))
+            iqr = q3 - q1
+            lower = float(max(vals.min(), q1 - 1.5 * iqr))
+            upper = float(min(vals.max(), q3 + 1.5 * iqr))
+            box_plots[col] = {
+                'min': round(lower, 4), 'q1': round(q1, 4),
+                'median': round(median, 4), 'q3': round(q3, 4),
+                'max': round(upper, 4), 'mean': round(float(vals.mean()), 4),
+            }
+        except Exception:
+            pass
+    result['box_plots'] = box_plots
+
+    # Correlation matrix (top 15 numeric cols)
+    try:
+        top_numeric = df[numeric_cols[:15]].select_dtypes(include='number')
+        corr = top_numeric.corr()
+        result['correlation'] = {
+            'columns': corr.columns.tolist(),
+            'matrix': [[round(float(v), 4) for v in row] for row in corr.values],
+        }
+    except Exception:
+        result['correlation'] = None
+
+    # Scatter data: sample of rows for top numeric cols
+    try:
+        sample_n = min(500, len(df))
+        sample_df = df[numeric_cols[:10]].sample(n=sample_n, random_state=42) if len(df) > 0 else df[numeric_cols[:10]]
+        result['scatter_data'] = {col: [round(float(v), 4) if pd.notna(v) else None for v in sample_df[col]]
+                                   for col in sample_df.columns}
+    except Exception:
+        result['scatter_data'] = {}
+
+    # Bar plot data: value counts for categorical columns
+    bar_plots = {}
+    for col in cat_cols[:10]:
+        try:
+            vc = df[col].value_counts().head(20)
+            bar_plots[col] = {'labels': vc.index.tolist(), 'values': vc.values.tolist()}
+        except Exception:
+            pass
+    result['bar_plots'] = bar_plots
+
     return jsonify(result)
 
 
@@ -622,17 +1018,42 @@ def run_agent(session_id):
 # TIER 1: CHAT (Upgraded with OpenAI + Memory)
 # ==============================================================================
 
-@app.route('/api/chat/<session_id>', methods=['POST'])
-def chat(session_id):
-    """Process chat message with full context injection and conversation memory."""
-    data = request.get_json()
-    message = data.get('message', '')
-    if not message:
-        return jsonify({'error': 'Message required'}), 400
-    result = pipeline_manager.chat(session_id, message)
-    if 'error' in result:
-        return jsonify(result), 400
-    return jsonify(result)
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    try:
+        data = request.get_json()
+        message = data.get('message', '')
+        session_id = data.get('session_id')
+
+        if not message:
+            return jsonify({'error': 'Message required'}), 400
+
+        session = pipeline_manager.get_session(session_id) if session_id else None
+        session_data = None
+
+        if session:
+            session_data = {
+                'df': session.transformed_df if session.transformed_df is not None else session.original_df,
+                'profile': session.profile,
+                'training_results': session.training_results,
+                'recommendations': session.recommendations,
+                'drift_report': session.drift_report,
+                'explainability': session.explainability,
+                'current_step': session.current_step,
+            }
+
+        result = pipeline_manager.chat_agent.chat(
+            message,
+            session_data=session_data,
+            session_id=session_id
+        )
+
+        return jsonify(result)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()  # prints full error in Flask terminal
+        return jsonify({'error': str(e), 'response': '❌ Server error: ' + str(e)}), 500
 
 
 # ==============================================================================
@@ -916,6 +1337,8 @@ def partial_dependence_api(session_id):
     from ml_engine.explainer import compute_partial_dependence
     top_n = request.args.get('top_n', 3, type=int)
     result = compute_partial_dependence(session.best_model, session.X_train, session.feature_names, top_n)
+    if isinstance(result, dict) and 'error' in result:
+        return jsonify(result), 400
     return jsonify({'pdp_data': result})
 
 
@@ -1280,7 +1703,215 @@ def dataset_similarity(session_id):
     })
 
 
+# ==============================================================================
+# v4.0: STACKING ENSEMBLE
+# ==============================================================================
 
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+@app.route('/api/ensemble/<session_id>', methods=['POST'])
+def build_ensemble(session_id):
+    """Build a stacking ensemble from the top trained models."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    if not session.trained_models or not session.training_results:
+        return jsonify({'error': 'No trained models available'}), 400
 
+    from ml_engine.ensemble_builder import build_stacking_ensemble
+    data = request.get_json() or {}
+    top_n = data.get('top_n', 3)
+
+    result = build_stacking_ensemble(
+        session.trained_models, session.training_results.get('leaderboard', []),
+        session.X_train, session.y_train, session.X_test, session.y_test,
+        session.profile.get('problem_type', 'classification'), top_n
+    )
+
+    if 'error' in result:
+        return jsonify(result), 400
+
+    # Store ensemble model as new best if it beats the current best
+    if result.get('beats_best'):
+        session.best_model = result.pop('ensemble_model', session.best_model)
+    else:
+        result.pop('ensemble_model', None)
+
+    return jsonify(result)
+
+
+# ==============================================================================
+# v4.0: MODEL CARD
+# ==============================================================================
+
+@app.route('/api/model-card/<session_id>')
+def model_card(session_id):
+    """Generate an automated model card."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    if not session.training_results:
+        return jsonify({'error': 'No training results'}), 400
+
+    from ml_engine.model_card_generator import generate_model_card
+    card = generate_model_card(
+        {},
+        profile=session.profile,
+        training_results=session.training_results,
+        explainability=session.explainability,
+        fairness_report=session.fairness_report,
+    )
+    return jsonify(card)
+
+
+# ==============================================================================
+# v4.0: SQL-STYLE DATA QUERYING
+# ==============================================================================
+
+@app.route('/api/query/<session_id>', methods=['POST'])
+def query_data(session_id):
+    """Execute a SQL-style or natural language query on the dataset."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    df = session.transformed_df if session.transformed_df is not None else (
+        session.cleaned_df if session.cleaned_df is not None else session.original_df)
+    if df is None:
+        return jsonify({'error': 'No dataset loaded'}), 400
+
+    data = request.get_json()
+    query_str = data.get('query', '')
+    if not query_str:
+        return jsonify({'error': 'Query string required'}), 400
+
+    from ml_engine.data_query_engine import query_dataset
+    result = query_dataset(df, query_str)
+    return jsonify(result)
+
+
+# ==============================================================================
+# v4.0: DATASET CHECKPOINTS
+# ==============================================================================
+
+@app.route('/api/checkpoints/<session_id>', methods=['GET'])
+def list_checkpoints(session_id):
+    """List all dataset checkpoints."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    return jsonify({'checkpoints': session.list_checkpoints()})
+
+
+@app.route('/api/checkpoints/<session_id>/save', methods=['POST'])
+def save_checkpoint(session_id):
+    """Save a named dataset checkpoint."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    data = request.get_json() or {}
+    label = data.get('label', 'auto')
+    labels = session.save_checkpoint(label)
+    return jsonify({'success': True, 'checkpoints': labels})
+
+
+@app.route('/api/checkpoints/<session_id>/restore', methods=['POST'])
+def restore_checkpoint(session_id):
+    """Restore a dataset from a named checkpoint."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    data = request.get_json() or {}
+    label = data.get('label', '')
+    result = session.restore_checkpoint(label)
+    if 'error' in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+# ==============================================================================
+# v4.0: FEATURE CROSSING & POLYNOMIALS
+# ==============================================================================
+
+@app.route('/api/feature-crossing/<session_id>', methods=['POST'])
+def feature_crossing(session_id):
+    """Auto-generate interaction features."""
+    session = pipeline_manager.get_session(session_id)
+    if not session or session.original_df is None:
+        return jsonify({'error': 'No dataset loaded'}), 400
+
+    from ml_engine.feature_studio import FeatureStudio
+    studio = FeatureStudio()
+    target = session.profile.get('target_column') if session.profile else None
+    data = request.get_json() or {}
+    result = studio.auto_feature_crossing(session.original_df, target, data.get('max_pairs', 10))
+    return jsonify(result)
+
+
+@app.route('/api/feature-polynomial/<session_id>', methods=['POST'])
+def feature_polynomial(session_id):
+    """Auto-generate polynomial features."""
+    session = pipeline_manager.get_session(session_id)
+    if not session or session.original_df is None:
+        return jsonify({'error': 'No dataset loaded'}), 400
+
+    from ml_engine.feature_studio import FeatureStudio
+    studio = FeatureStudio()
+    target = session.profile.get('target_column') if session.profile else None
+    data = request.get_json() or {}
+    result = studio.auto_polynomial_features(session.original_df, target, data.get('degree', 2))
+    return jsonify(result)
+
+
+# ==============================================================================
+# v4.0: PREDICTION PLAYGROUND
+# ==============================================================================
+
+@app.route('/api/playground/<session_id>')
+def prediction_playground(session_id):
+    """Return feature metadata for interactive prediction slider UI."""
+    session = pipeline_manager.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    if session.best_model is None or session.X_train is None:
+        return jsonify({'error': 'No trained model available'}), 400
+
+    features = []
+    for col in session.feature_names:
+        if col not in session.X_train.columns:
+            continue
+        series = session.X_train[col]
+        info = {'name': col, 'dtype': str(series.dtype)}
+        if pd.api.types.is_numeric_dtype(series):
+            info['type'] = 'slider'
+            info['min'] = round(float(series.min()), 4)
+            info['max'] = round(float(series.max()), 4)
+            info['mean'] = round(float(series.mean()), 4)
+            info['median'] = round(float(series.median()), 4)
+            info['step'] = round(float((series.max() - series.min()) / 100), 4) if series.max() != series.min() else 1
+        else:
+            info['type'] = 'dropdown'
+            info['options'] = series.value_counts().head(20).index.tolist()
+            info['default'] = series.mode().iloc[0] if len(series.mode()) > 0 else None
+        features.append(info)
+
+    return jsonify({
+        'features': features,
+        'target': session.profile.get('target_column') if session.profile else None,
+        'problem_type': session.profile.get('problem_type') if session.profile else None,
+        'n_features': len(features),
+    })
+
+
+@app.route('/api/playground/<session_id>/predict', methods=['POST'])
+def playground_predict(session_id):
+    """Live prediction from playground with confidence."""
+    session = pipeline_manager.get_session(session_id)
+    if not session or session.best_model is None:
+        return jsonify({'error': 'No trained model available'}), 400
+
+    data = request.get_json()
+    result = pipeline_manager.predict(session_id, data)
+    return jsonify(result)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=7860, debug=False)

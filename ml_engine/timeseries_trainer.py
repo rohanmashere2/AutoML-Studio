@@ -24,6 +24,12 @@ try:
 except ImportError:
     HAS_LGBM = False
 
+try:
+    from catboost import CatBoostRegressor
+    HAS_CATBOOST = True
+except ImportError:
+    HAS_CATBOOST = False
+
 
 def train_timeseries_models(df, target_col, datetime_col=None, forecast_horizon=None,
                              output_dir=None, progress_callback=None):
@@ -198,6 +204,10 @@ def _get_ts_models():
         models['LightGBM'] = LGBMRegressor(
             n_estimators=200, max_depth=5, learning_rate=0.05, random_state=42, verbose=-1
         )
+    if HAS_CATBOOST:
+        models['CatBoost'] = CatBoostRegressor(
+            iterations=200, depth=5, learning_rate=0.05, random_state=42, verbose=0
+        )
     
     return models
 
@@ -278,3 +288,80 @@ def _mape(y_true, y_pred):
     if mask.sum() == 0:
         return 0.0
     return float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100)
+
+
+def auto_lag_features(df, target_col, datetime_col=None, max_lags=10):
+    """Automatically generate optimal lag features for a time-series target.
+    
+    Args:
+        df: DataFrame sorted by time
+        target_col: column to generate lags for
+        datetime_col: optional datetime column
+        max_lags: maximum number of lags to generate
+    
+    Returns:
+        tuple: (df_with_lags, lag_report)
+    """
+    df = df.copy()
+    
+    if datetime_col and datetime_col in df.columns:
+        df = df.sort_values(datetime_col).reset_index(drop=True)
+    
+    # Generate lag features
+    lags_added = []
+    for lag in range(1, max_lags + 1):
+        col_name = f'{target_col}_lag_{lag}'
+        df[col_name] = df[target_col].shift(lag)
+        lags_added.append(col_name)
+    
+    # Rolling window features
+    for window in [3, 7, 14]:
+        if window < len(df) // 3:
+            df[f'{target_col}_roll_mean_{window}'] = df[target_col].shift(1).rolling(window).mean()
+            df[f'{target_col}_roll_std_{window}'] = df[target_col].shift(1).rolling(window).std()
+            lags_added.extend([f'{target_col}_roll_mean_{window}', f'{target_col}_roll_std_{window}'])
+    
+    # Drop rows with NaN from lag generation
+    n_before = len(df)
+    df = df.dropna().reset_index(drop=True)
+    
+    report = {
+        'lags_added': lags_added,
+        'n_lag_features': len(lags_added),
+        'rows_dropped': n_before - len(df),
+        'rows_remaining': len(df),
+    }
+    
+    return df, report
+
+
+def seasonal_decomposition(df, target_col, datetime_col=None, period=None):
+    """Perform seasonal decomposition of a time-series column.
+    
+    Returns:
+        dict with trend, seasonal, residual components
+    """
+    try:
+        from statsmodels.tsa.seasonal import seasonal_decompose
+        
+        series = df[target_col].dropna()
+        
+        if period is None:
+            period = min(12, max(2, len(series) // 4))
+        
+        if len(series) < 2 * period:
+            return {'error': 'Not enough data points for decomposition'}
+        
+        result = seasonal_decompose(series, model='additive', period=period)
+        
+        return {
+            'trend': result.trend.dropna().tolist(),
+            'seasonal': result.seasonal.dropna().tolist(),
+            'residual': result.resid.dropna().tolist(),
+            'period': period,
+            'n_observations': len(series),
+        }
+    except ImportError:
+        return {'error': 'statsmodels not installed'}
+    except Exception as e:
+        return {'error': str(e)}

@@ -60,18 +60,57 @@ def reduce_dimensions(X, labels=None, method='all', n_components=2):
     except Exception as e:
         results['t-SNE'] = {'error': str(e)}
     
-    # UMAP
+    # UMAP (2D)
     try:
         import umap
-        reducer = umap.UMAP(n_components=n_components, random_state=42, n_neighbors=min(15, X_scaled.shape[0] - 1))
+        n_neighbors_umap = min(15, X_scaled.shape[0] - 1)
+        reducer = umap.UMAP(n_components=min(n_components, 2), random_state=42,
+                            n_neighbors=n_neighbors_umap)
         coords = reducer.fit_transform(X_scaled)
+        
+        # Compute trustworthiness
+        try:
+            from sklearn.manifold import trustworthiness as tw_func
+            trust = round(float(tw_func(X_scaled, coords, n_neighbors=min(5, X_scaled.shape[0] - 2))), 4)
+        except Exception:
+            trust = None
+        
         results['UMAP'] = {
             'coordinates': coords.tolist(),
+            'trustworthiness': trust,
         }
     except ImportError:
         results['UMAP'] = {'error': 'umap-learn not installed'}
     except Exception as e:
         results['UMAP'] = {'error': str(e)}
+    
+    # 3D Projections (UMAP and t-SNE)
+    if n_components >= 3 or n_components == 3:
+        # UMAP 3D
+        try:
+            import umap
+            reducer_3d = umap.UMAP(n_components=3, random_state=42,
+                                    n_neighbors=min(15, X_scaled.shape[0] - 1))
+            coords_3d = reducer_3d.fit_transform(X_scaled)
+            results['UMAP_3D'] = {
+                'coordinates': coords_3d.tolist(),
+            }
+        except Exception:
+            pass
+        
+        # t-SNE 3D
+        try:
+            from sklearn.manifold import TSNE
+            n_samples = X_scaled.shape[0]
+            perplexity = min(30, max(5, n_samples // 5))
+            tsne_3d = TSNE(n_components=3, perplexity=perplexity, random_state=42, max_iter=1000)
+            coords_3d = tsne_3d.fit_transform(X_scaled[:min(n_samples, 3000)])
+            results['t-SNE_3D'] = {
+                'coordinates': coords_3d.tolist(),
+                'kl_divergence': round(float(tsne_3d.kl_divergence_), 4),
+            }
+        except Exception:
+            pass
     
     # Add labels if provided
     if labels is not None:

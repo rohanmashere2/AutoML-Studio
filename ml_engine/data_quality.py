@@ -26,7 +26,7 @@ def compute_data_quality(df, target_column=None):
     return {
         'overall_score': round(overall, 1),
         'overall_grade': _grade(overall),
-        'column_scores': column_scores,
+        'column_scores': sorted(column_scores, key=lambda x: x['quality_score']),
         'total_columns': len(column_scores),
         'high_quality': sum(1 for s in column_scores if s['quality_score'] >= 80),
         'medium_quality': sum(1 for s in column_scores if 50 <= s['quality_score'] < 80),
@@ -102,6 +102,44 @@ def _score_column(series, col_name):
         uniqueness * 0.15
     )
     
+    # Outlier statistics & skewness for numeric columns
+    outlier_pct = 0.0
+    skewness = None
+    distribution = None
+    if pd.api.types.is_numeric_dtype(series):
+        non_null = series.dropna()
+        if len(non_null) > 10:
+            q1, q3 = non_null.quantile(0.25), non_null.quantile(0.75)
+            iqr = q3 - q1
+            if iqr > 0:
+                outlier_mask = (non_null < q1 - 1.5 * iqr) | (non_null > q3 + 1.5 * iqr)
+                outlier_pct = round(float(outlier_mask.mean() * 100), 2)
+            skewness = round(float(non_null.skew()), 3)
+            kurtosis_val = float(non_null.kurtosis())
+            if abs(skewness) < 0.5:
+                distribution = 'normal'
+            elif skewness > 1.5:
+                distribution = 'highly_right_skewed'
+            elif skewness > 0.5:
+                distribution = 'right_skewed'
+            elif skewness < -1.5:
+                distribution = 'highly_left_skewed'
+            else:
+                distribution = 'left_skewed'
+    
+    # Generate actionable recommendations
+    recommendations = []
+    if completeness < 70:
+        recommendations.append({'action': 'drop_or_impute', 'reason': f'{100-completeness:.0f}% missing — consider dropping or advanced imputation (KNN/MICE)'})
+    elif completeness < 95:
+        recommendations.append({'action': 'impute', 'reason': f'{100-completeness:.0f}% missing — impute with median/mode'})
+    if outlier_pct > 5:
+        recommendations.append({'action': 'clip_outliers', 'reason': f'{outlier_pct:.1f}% outliers detected — consider winsorizing'})
+    if skewness is not None and abs(skewness) > 1.5:
+        recommendations.append({'action': 'log_transform', 'reason': f'High skewness ({skewness:.2f}) — apply log/sqrt transform'})
+    if uniqueness < 40 and series.dtype == 'object':
+        recommendations.append({'action': 'review_column', 'reason': 'Possible ID column or near-constant — may not add predictive value'})
+    
     return {
         'column': col_name,
         'dtype': str(series.dtype),
@@ -111,7 +149,11 @@ def _score_column(series, col_name):
         'consistency': round(consistency, 1),
         'validity': round(validity, 1),
         'uniqueness': round(uniqueness, 1),
+        'outlier_pct': outlier_pct,
+        'skewness': skewness,
+        'distribution': distribution,
         'issues': issues,
+        'recommendations': recommendations,
         'n_missing': int(series.isnull().sum()),
         'n_unique': int(nunique),
     }

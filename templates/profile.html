@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoML Studio - Profile</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --accent: #6366F1;
+            --accent2: #06B6D4;
+            --success: #10B981;
+            --danger: #EF4444;
+            --bg0: #ffffff;
+            --bg1: #F8FAFC;
+            --bg2: #F1F5F9;
+            --txt: #0F172A;
+            --txt2: #64748B;
+            --bdr: #E2E8F0;
+            --bdr2: #CBD5E1;
+            --r4: 6px;
+            --r8: 10px;
+            --font: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            font-family: var(--font);
+            background: var(--bg2);
+            color: var(--txt);
+            min-height: 100vh;
+        }
+
+        .topbar {
+            height: 56px;
+            background: var(--bg0);
+            border-bottom: 1px solid var(--bdr);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 18px;
+            position: sticky;
+            top: 0;
+            z-index: 20;
+        }
+
+        .logo-wrap {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo {
+            font-weight: 800;
+            font-size: 18px;
+            letter-spacing: .2px;
+        }
+
+        .logo span {
+            color: var(--accent);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 12px;
+            border: 1px solid var(--bdr2);
+            border-radius: var(--r4);
+            background: var(--bg0);
+            color: var(--txt2);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all .15s;
+        }
+
+        .btn:hover {
+            background: var(--bg1);
+            color: var(--txt);
+        }
+
+        .btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        .btn.primary:hover {
+            background: #4F46E5;
+        }
+
+        .btn.danger {
+            background: var(--danger);
+            border-color: var(--danger);
+            color: #fff;
+        }
+
+        .page {
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 0 16px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+
+        .card {
+            background: var(--bg0);
+            border: 1px solid var(--bdr);
+            border-radius: var(--r8);
+            padding: 14px;
+        }
+
+        .title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .sub {
+            color: var(--txt2);
+            font-size: 13px;
+            margin-bottom: 14px;
+        }
+
+        .profile-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+
+        .avatar {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            color: #fff;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .kv {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 8px;
+            padding: 7px 0;
+            border-bottom: 1px solid var(--bdr);
+            font-size: 13px;
+        }
+
+        .kv:last-child {
+            border-bottom: none;
+        }
+
+        .k {
+            color: var(--txt2);
+            font-weight: 600;
+        }
+
+        .v {
+            font-weight: 600;
+            word-break: break-word;
+        }
+
+        .settings-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--bdr);
+        }
+
+        .settings-item:last-child {
+            border-bottom: none;
+        }
+
+        .settings-name {
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .settings-desc {
+            color: var(--txt2);
+            font-size: 12px;
+            margin-top: 2px;
+        }
+
+        .settings-select {
+            min-width: 160px;
+            padding: 7px 10px;
+            border: 1px solid var(--bdr2);
+            border-radius: var(--r4);
+            background: var(--bg0);
+            color: var(--txt);
+            font-size: 12px;
+            font-family: var(--font);
+            outline: none;
+        }
+
+        .settings-select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, .1);
+        }
+
+        .switch {
+            width: 44px;
+            height: 24px;
+            position: relative;
+            display: inline-block;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #CBD5E1;
+            transition: .2s;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            top: 3px;
+            background: #fff;
+            transition: .2s;
+            border-radius: 50%;
+        }
+
+        .switch input:checked+.slider {
+            background: var(--accent);
+        }
+
+        .switch input:checked+.slider:before {
+            transform: translateX(20px);
+        }
+
+        .row-actions {
+            margin-top: 12px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: var(--success);
+            margin-top: 10px;
+            min-height: 18px;
+        }
+
+        @media (max-width: 900px) {
+            .page {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .logo-img {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            object-fit: cover;
+            box-shadow: 0 6px 18px rgba(99, 102, 241, 0.5);
+        }
+
+        .logo-txt-new {
+            font-size: 20px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            display: flex;
+            align-items: center;
+            line-height: 1;
+            white-space: nowrap;
+        }
+
+        .logo-txt-new span {
+            margin-left: 6px;
+            background: linear-gradient(135deg, #6366F1, #06B6D4);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="topbar">
+        <div class="logo-wrap">
+            <img src="/static/logo.png" class="logo-img" alt="AutoML Logo">
+            <span class="logo-txt-new">
+                AutoML <span>Studio</span>
+            </span>
+        </div>
+        <button class="btn" onclick="window.location.href='/dashboard'">Back to Dashboard</button>
+    </div>
+
+    <main class="page">
+        <section class="card">
+            <div class="title">Profile</div>
+            <div class="sub">Details for the currently logged-in user</div>
+
+            <div class="profile-head">
+                <div class="avatar" id="profileAvatar">AS</div>
+                <div>
+                    <div style="font-size:16px;font-weight:700" id="profileName">AutoML User</div>
+                    <div style="font-size:12px;color:var(--txt2)" id="profileEmail">No email available</div>
+                </div>
+            </div>
+
+            <div class="kv">
+                <div class="k">User ID</div>
+                <div class="v" id="profileUid">-</div>
+            </div>
+            <div class="kv">
+                <div class="k">Phone</div>
+                <div class="v" id="profilePhone">Not set</div>
+            </div>
+            <div class="kv">
+                <div class="k">Provider</div>
+                <div class="v" id="profileProvider">Email / Password</div>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="title">Settings</div>
+            <div class="sub">Personal preferences for your account</div>
+
+            <div class="settings-item">
+                <div>
+                    <div class="settings-name">Web Theme</div>
+                    <div class="settings-desc">Choose light, dark, or follow the system theme</div>
+                </div>
+                <select class="settings-select" id="setWebTheme">
+                    <option value="auto">Auto</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                </select>
+            </div>
+
+            <div class="settings-item">
+                <div>
+                    <div class="settings-name">Language</div>
+                    <div class="settings-desc">Set the interface language for the web app</div>
+                </div>
+                <select class="settings-select" id="setLanguage">
+                    <option value="en">English</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                </select>
+            </div>
+
+            <div class="settings-item">
+                <div>
+                    <div class="settings-name">Auto-refresh Dashboard</div>
+                    <div class="settings-desc">Refresh experiment and pipeline data automatically</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="setAutoRefresh">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="settings-item">
+                <div>
+                    <div class="settings-name">Reduce Motion</div>
+                    <div class="settings-desc">Minimize animations for a calmer web experience</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="setReduceMotion">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="settings-item">
+                <div>
+                    <div class="settings-name">Open Downloads in New Tab</div>
+                    <div class="settings-desc">Use a new tab when opening B2 download links</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="setNewTabDownloads">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="settings-item">
+                <div>
+                    <div class="settings-name">Dark Theme</div>
+                    <div class="settings-desc">Use dark appearance for your pages</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="setDarkTheme">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="settings-item">
+                <div>
+                    <div class="settings-name">Email Notifications</div>
+                    <div class="settings-desc">Receive updates about pipeline completion</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="setEmailNotifications">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="settings-item">
+                <div>
+                    <div class="settings-name">Compact Dashboard</div>
+                    <div class="settings-desc">Show denser cards and tables in dashboard</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="setCompactMode">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="settings-item">
+                <div>
+                    <div class="settings-name">Auto-save Session</div>
+                    <div class="settings-desc">Restore previous project automatically</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="setAutoSave">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="row-actions">
+                <button class="btn primary" onclick="saveSettings()">Save Settings</button>
+                <button class="btn danger" onclick="logout()">Logout</button>
+            </div>
+            <div class="hint" id="settingsHint"></div>
+        </section>
+    </main>
+
+    <script>
+        function getInitials(name, email) {
+            const safeName = (name || '').trim();
+            if (safeName) {
+                const parts = safeName.split(/\s+/).filter(Boolean);
+                if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+                return safeName.slice(0, 2).toUpperCase();
+            }
+            return (email || 'AS').slice(0, 2).toUpperCase();
+        }
+
+        function loadProfile() {
+            let user = {};
+            try {
+                user = JSON.parse(localStorage.getItem('automl_user') || '{}');
+            } catch (e) {
+                user = {};
+            }
+
+            const name = user.name || 'AutoML User';
+            const email = user.email || 'No email available';
+            const uid = user.uid || '-';
+            const phone = user.phone || 'Not set';
+            const provider = user.email ? 'Email / Password or Google' : 'Unknown';
+
+            document.getElementById('profileAvatar').textContent = getInitials(name, email);
+            document.getElementById('profileName').textContent = name;
+            document.getElementById('profileEmail').textContent = email;
+            document.getElementById('profileUid').textContent = uid;
+            document.getElementById('profilePhone').textContent = phone;
+            document.getElementById('profileProvider').textContent = provider;
+        }
+
+        function loadSettings() {
+            let s = {};
+            try {
+                s = JSON.parse(localStorage.getItem('automl_profile_settings') || '{}');
+            } catch (e) {
+                s = {};
+            }
+
+            document.getElementById('setWebTheme').value = s.webTheme || 'auto';
+            document.getElementById('setLanguage').value = s.language || 'en';
+            document.getElementById('setAutoRefresh').checked = s.autoRefresh !== false;
+            document.getElementById('setReduceMotion').checked = !!s.reduceMotion;
+            document.getElementById('setNewTabDownloads').checked = s.newTabDownloads !== false;
+            document.getElementById('setDarkTheme').checked = !!s.darkTheme;
+            document.getElementById('setEmailNotifications').checked = !!s.emailNotifications;
+            document.getElementById('setCompactMode').checked = !!s.compactMode;
+            document.getElementById('setAutoSave').checked = s.autoSave !== false;
+        }
+
+        function saveSettings() {
+            const settings = {
+                webTheme: document.getElementById('setWebTheme').value,
+                language: document.getElementById('setLanguage').value,
+                autoRefresh: document.getElementById('setAutoRefresh').checked,
+                reduceMotion: document.getElementById('setReduceMotion').checked,
+                newTabDownloads: document.getElementById('setNewTabDownloads').checked,
+                darkTheme: document.getElementById('setDarkTheme').checked,
+                emailNotifications: document.getElementById('setEmailNotifications').checked,
+                compactMode: document.getElementById('setCompactMode').checked,
+                autoSave: document.getElementById('setAutoSave').checked
+            };
+
+            localStorage.setItem('automl_profile_settings', JSON.stringify(settings));
+
+            const hint = document.getElementById('settingsHint');
+            hint.textContent = 'Settings saved successfully.';
+            setTimeout(() => {
+                hint.textContent = '';
+            }, 2400);
+        }
+
+        function logout() {
+            localStorage.removeItem('automl_user');
+            window.location.href = '/login';
+        }
+
+        loadProfile();
+        loadSettings();
+    </script>
+</body>
+
+</html>

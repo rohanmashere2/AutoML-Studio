@@ -4,6 +4,7 @@ numpy
 scikit-learn
 xgboost
 lightgbm
+catboost
 imbalanced-learn
 joblib
 flask-cors
@@ -18,4 +19,8 @@ transformers
 optuna
 openai
 dice-ml
+hdbscan
+umap-learn
+statsmodels
+firebase-admin
 

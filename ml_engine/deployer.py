@@ -10,6 +10,55 @@ import pandas as pd
 import numpy as np
 
 
+def _to_numeric_feature(value):
+    """Best-effort conversion for single-row API feature inputs."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return float(value)
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+
+    text = str(value).strip()
+    if not text:
+        return 0.0
+
+    lowered = text.lower()
+    if lowered in {'true', 'yes', 'y', 'on'}:
+        return 1.0
+    if lowered in {'false', 'no', 'n', 'off'}:
+        return 0.0
+
+    try:
+        return float(text)
+    except Exception:
+        # For unseen categorical strings without stored encoder mapping, use neutral default.
+        return 0.0
+
+
+def prepare_single_row(features, feature_names, transform_metadata=None):
+    """Prepare a single-row DataFrame for prediction/explanation."""
+    row = {}
+    for fname in feature_names:
+        if fname in features:
+            row[fname] = _to_numeric_feature(features[fname])
+        else:
+            row[fname] = 0.0
+
+    X = pd.DataFrame([row], columns=feature_names)
+
+    if transform_metadata and transform_metadata.get('scaler'):
+        try:
+            X = pd.DataFrame(
+                transform_metadata['scaler'].transform(X),
+                columns=feature_names
+            )
+        except Exception:
+            pass
+
+    return X, row
+
+
 def predict_single(model, features, feature_names, transform_metadata=None):
     """
     Make a prediction for a single input.
@@ -24,25 +73,7 @@ def predict_single(model, features, feature_names, transform_metadata=None):
         dict: prediction, probabilities, confidence
     """
     try:
-        # Build input DataFrame
-        row = {}
-        for fname in feature_names:
-            if fname in features:
-                row[fname] = float(features[fname])
-            else:
-                row[fname] = 0.0  # Default for missing features
-        
-        X = pd.DataFrame([row], columns=feature_names)
-        
-        # Apply scaling if metadata available
-        if transform_metadata and transform_metadata.get('scaler'):
-            try:
-                X = pd.DataFrame(
-                    transform_metadata['scaler'].transform(X),
-                    columns=feature_names
-                )
-            except Exception:
-                pass
+        X, _ = prepare_single_row(features, feature_names, transform_metadata)
         
         # Predict
         prediction = model.predict(X)[0]
@@ -54,7 +85,21 @@ def predict_single(model, features, feature_names, transform_metadata=None):
         # Probabilities for classification
         if hasattr(model, 'predict_proba'):
             proba = model.predict_proba(X)[0]
-            result['probabilities'] = {str(i): round(float(p), 4) for i, p in enumerate(proba)}
+            labels = None
+            if transform_metadata and transform_metadata.get('target_encoder'):
+                try:
+                    labels = [str(c) for c in transform_metadata['target_encoder'].classes_]
+                except Exception:
+                    labels = None
+            if labels is None and hasattr(model, 'classes_'):
+                try:
+                    labels = [str(c) for c in model.classes_]
+                except Exception:
+                    labels = None
+            if labels is None:
+                labels = [str(i) for i in range(len(proba))]
+
+            result['probabilities'] = {labels[i]: round(float(p), 4) for i, p in enumerate(proba)}
             result['confidence'] = round(float(max(proba)), 4)
         
         # Decode target label if encoder available

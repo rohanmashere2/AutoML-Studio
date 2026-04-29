@@ -100,6 +100,25 @@ def detect_anomalies(X, contamination=0.05):
     except Exception:
         pass
     
+    # 6. HDBSCAN (density-based, handles complex shapes)
+    try:
+        import hdbscan
+        hdb = hdbscan.HDBSCAN(min_cluster_size=max(5, n // 50), prediction_data=False)
+        hdb.fit(X_scaled)
+        # Points labeled -1 are outliers; outlier_scores_ gives a probability
+        hdb_labels = hdb.labels_
+        anomaly_mask = hdb_labels == -1
+        if anomaly_mask.sum() > 0:
+            votes[anomaly_mask] += 1
+            detector_results['HDBSCAN'] = {
+                'n_anomalies': int(anomaly_mask.sum()),
+                'pct': round(anomaly_mask.mean() * 100, 2)
+            }
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    
     # Consensus: anomaly if detected by 2+ methods
     n_detectors = len(detector_results)
     consensus_threshold = max(2, n_detectors // 2)

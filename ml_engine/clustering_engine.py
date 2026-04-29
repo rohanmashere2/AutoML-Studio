@@ -5,9 +5,9 @@ Clustering Engine — Auto-clustering with 5 algorithms and optimal k selection.
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering, SpectralClustering
 from sklearn.mixture import GaussianMixture
-from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
+from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score, adjusted_rand_score
 
 
 def auto_cluster(X, max_k=10):
@@ -106,6 +106,33 @@ def auto_cluster(X, max_k=10):
     except Exception:
         pass
     
+    # Spectral Clustering
+    try:
+        n_spectral = min(n_samples, 5000)  # Sub-sample for large datasets
+        if n_samples > 5000:
+            idx = np.random.RandomState(42).choice(n_samples, n_spectral, replace=False)
+            X_spec = X_scaled[idx]
+        else:
+            X_spec = X_scaled
+        sc = SpectralClustering(n_clusters=optimal_k, random_state=42, affinity='nearest_neighbors',
+                                n_neighbors=min(10, n_spectral - 1))
+        labels_spec = sc.fit_predict(X_spec)
+        if n_samples > 5000:
+            # Assign full dataset via nearest centroid
+            from sklearn.neighbors import NearestCentroid
+            nc = NearestCentroid()
+            nc.fit(X_spec, labels_spec)
+            labels = nc.predict(X_scaled)
+        else:
+            labels = labels_spec
+        sil = silhouette_score(X_scaled, labels) if len(set(labels)) > 1 else -1
+        algorithms['Spectral'] = {
+            'labels': labels.tolist(), 'n_clusters': optimal_k,
+            'silhouette': round(sil, 4), 'subsampled': n_samples > 5000
+        }
+    except Exception:
+        pass
+    
     # HDBSCAN (optional)
     try:
         import hdbscan
@@ -130,6 +157,9 @@ def auto_cluster(X, max_k=10):
     # Generate cluster profiles
     profiles = _generate_cluster_profiles(X_arr, best_labels, feature_names)
     
+    # Cluster stability analysis
+    stability = _compute_cluster_stability(X_scaled, best_name, optimal_k, n_runs=5)
+    
     return {
         'best_algorithm': best_name,
         'optimal_k': optimal_k,
@@ -139,6 +169,7 @@ def auto_cluster(X, max_k=10):
         'best_labels': best_labels,
         'best_silhouette': best.get('silhouette', -1),
         'cluster_profiles': profiles,
+        'cluster_stability': stability,
         'n_samples': n_samples,
         'n_features': X_scaled.shape[1],
     }
@@ -171,3 +202,57 @@ def _generate_cluster_profiles(X, labels, feature_names):
         profiles.append(profile)
     
     return profiles
+
+
+def _compute_cluster_stability(X_scaled, algorithm_name, optimal_k, n_runs=5):
+    """Measure cluster stability by running the algorithm with different seeds and computing ARI."""
+    try:
+        all_labels = []
+        for seed in range(n_runs):
+            if algorithm_name == 'K-Means':
+                model = KMeans(n_clusters=optimal_k, random_state=seed, n_init=10)
+            elif algorithm_name == 'Hierarchical':
+                model = AgglomerativeClustering(n_clusters=optimal_k)
+            elif algorithm_name == 'Gaussian Mixture':
+                model = GaussianMixture(n_components=optimal_k, random_state=seed)
+            elif algorithm_name == 'Spectral':
+                model = SpectralClustering(n_clusters=optimal_k, random_state=seed,
+                                           affinity='nearest_neighbors',
+                                           n_neighbors=min(10, X_scaled.shape[0] - 1))
+            else:
+                return {'stable': True, 'score': 1.0, 'message': 'Stability not applicable for this algorithm'}
+            
+            labels = model.fit_predict(X_scaled)
+            all_labels.append(labels)
+        
+        # Compute pairwise ARI
+        ari_scores = []
+        for i in range(len(all_labels)):
+            for j in range(i + 1, len(all_labels)):
+                ari = adjusted_rand_score(all_labels[i], all_labels[j])
+                ari_scores.append(ari)
+        
+        mean_ari = float(np.mean(ari_scores)) if ari_scores else 0.0
+        
+        if mean_ari > 0.9:
+            verdict = 'highly_stable'
+            message = 'Clusters are highly stable across runs — results are reliable.'
+        elif mean_ari > 0.7:
+            verdict = 'stable'
+            message = 'Clusters are reasonably stable. Minor variations exist.'
+        elif mean_ari > 0.4:
+            verdict = 'moderately_stable'
+            message = 'Clusters show moderate variation. Consider increasing data or reducing k.'
+        else:
+            verdict = 'unstable'
+            message = 'Clusters are unstable — may be artifacts of initialization. Try different algorithms or k values.'
+        
+        return {
+            'mean_ari': round(mean_ari, 4),
+            'n_runs': n_runs,
+            'verdict': verdict,
+            'message': message,
+            'stable': mean_ari > 0.7,
+        }
+    except Exception:
+        return {'stable': True, 'score': 1.0, 'message': 'Stability analysis skipped'}

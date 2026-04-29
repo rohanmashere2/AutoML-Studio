@@ -254,3 +254,104 @@ class FeatureStudio:
                 return pd.Series(result, index=df.index)
         except Exception as e:
             raise ValueError(f"Expression evaluation failed: {str(e)}")
+
+    def auto_feature_crossing(self, df, target=None, max_pairs=10):
+        """Automatically generate interaction features from numeric column pairs.
+        
+        Filters by mutual information with target if available.
+        
+        Returns:
+            dict with new columns added and their MI scores
+        """
+        numeric_cols = df.select_dtypes(include='number').columns.tolist()
+        if target and target in numeric_cols:
+            numeric_cols.remove(target)
+        
+        if len(numeric_cols) < 2:
+            return {'features': [], 'message': 'Need at least 2 numeric columns'}
+        
+        # Limit to top columns by variance
+        variances = df[numeric_cols].var().sort_values(ascending=False)
+        top_cols = variances.head(min(8, len(numeric_cols))).index.tolist()
+        
+        # Generate interaction features
+        new_features = []
+        df_new = df.copy()
+        
+        from itertools import combinations
+        for col_a, col_b in combinations(top_cols, 2):
+            name = f"{col_a}_x_{col_b}"
+            df_new[name] = df[col_a] * df[col_b]
+            new_features.append({'name': name, 'type': 'interaction', 'parents': [col_a, col_b]})
+        
+        # Score by mutual information with target
+        if target and target in df.columns:
+            try:
+                from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
+                y = df[target].dropna()
+                X_new = df_new[[f['name'] for f in new_features]].loc[y.index].fillna(0)
+                
+                if df[target].dtype == 'object' or df[target].nunique() <= 20:
+                    mi_scores = mutual_info_classif(X_new, y, random_state=42)
+                else:
+                    mi_scores = mutual_info_regression(X_new, y, random_state=42)
+                
+                for i, feat in enumerate(new_features):
+                    feat['mi_score'] = round(float(mi_scores[i]), 4)
+                
+                new_features.sort(key=lambda x: x.get('mi_score', 0), reverse=True)
+                new_features = new_features[:max_pairs]
+            except Exception:
+                new_features = new_features[:max_pairs]
+        else:
+            new_features = new_features[:max_pairs]
+        
+        return {
+            'features': new_features,
+            'n_generated': len(new_features),
+        }
+    
+    def auto_polynomial_features(self, df, target=None, degree=2, max_features=10):
+        """Generate polynomial features and filter by MI with target.
+        
+        Returns:
+            dict with polynomial feature names and scores
+        """
+        numeric_cols = df.select_dtypes(include='number').columns.tolist()
+        if target and target in numeric_cols:
+            numeric_cols.remove(target)
+        
+        top_cols = numeric_cols[:min(6, len(numeric_cols))]
+        
+        new_features = []
+        df_new = df.copy()
+        
+        for col in top_cols:
+            for d in range(2, degree + 1):
+                name = f"{col}_pow{d}"
+                df_new[name] = df[col] ** d
+                new_features.append({'name': name, 'type': 'polynomial', 'parent': col, 'degree': d})
+        
+        # Filter by MI with target
+        if target and target in df.columns and new_features:
+            try:
+                from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
+                y = df[target].dropna()
+                X_new = df_new[[f['name'] for f in new_features]].loc[y.index].fillna(0).replace([np.inf, -np.inf], 0)
+                
+                if df[target].dtype == 'object' or df[target].nunique() <= 20:
+                    mi_scores = mutual_info_classif(X_new, y, random_state=42)
+                else:
+                    mi_scores = mutual_info_regression(X_new, y, random_state=42)
+                
+                for i, feat in enumerate(new_features):
+                    feat['mi_score'] = round(float(mi_scores[i]), 4)
+                
+                new_features.sort(key=lambda x: x.get('mi_score', 0), reverse=True)
+            except Exception:
+                pass
+        
+        return {
+            'features': new_features[:max_features],
+            'n_generated': len(new_features[:max_features]),
+        }

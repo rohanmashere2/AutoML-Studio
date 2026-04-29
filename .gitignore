@@ -1,7 +1,15 @@
-uploads/
-outputs/
+
 __pycache__/
 *.pyc
 .env
 venv/
 *.pkl
+.env
+
+*.db
+.pytest_cache/
+temp_script_*.js
+test_*.py
+test_loan_data.csv
+echo "automl_experiments.db"
+echo "static/logo.png"
