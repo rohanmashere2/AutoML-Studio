@@ -128,22 +128,18 @@ class AutoMLChatAgent:
         self._init_local_llm()
 
     def _init_gemini(self, api_key):
-        print(f"[DEBUG] Attempting Gemini init with key: {api_key[:8]}...")
+        """Initialize Gemini model without making a test API call (saves credits and startup time)."""
         try:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            # Test with a simple call before committing
             self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
-            # Lightweight validation
-            test = self.gemini_model.generate_content("hi")
-            print(f"[DEBUG] Gemini test response: {test.text[:30]}")
             self.llm_provider = 'gemini'
             self.llm_available = True
-            print("✅ LLM Agent: Gemini 2.5 Flash ready")
+            print("[OK] LLM Agent: Gemini 2.5 Flash ready")
         except ImportError:
-            print("❌ google-generativeai not installed. Run: pip install google-generativeai")
+            print("[ERROR] google-generativeai not installed. Run: pip install google-generativeai")
         except Exception as e:
-            print(f"❌ Gemini init failed: {type(e).__name__}: {e}")
+            print(f"[ERROR] Gemini init failed: {type(e).__name__}: {e}")
 
     def _init_openai(self, api_key):
         """Initialize OpenAI client."""
@@ -153,9 +149,9 @@ class AutoMLChatAgent:
             self.openai_client.models.list()  # validate key
             self.llm_provider = 'openai'
             self.llm_available = True
-            print("✅ LLM Agent: OpenAI GPT-4o-mini ready")
+            print("[OK] LLM Agent: OpenAI GPT-4o-mini ready")
         except Exception as e:
-            print(f"⚠️ OpenAI init failed: {e}")
+            print(f"[WARN] OpenAI init failed: {e}")
             self.llm_provider = None
             self.llm_available = False
 
@@ -171,12 +167,12 @@ class AutoMLChatAgent:
             AutoMLChatAgent._shared_pipeline = pipeline("text2text-generation", model="google/flan-t5-small")
             self.llm_provider = 'local'
             self.llm_available = True
-            print("✅ LLM Agent: Local flan-t5-small ready")
+            print("[OK] LLM Agent: Local flan-t5-small ready")
         except Exception as e:
-            print(f"⚠️ Local LLM init warning: {e}")
+            print(f"[WARN] Local LLM init warning: {e}")
             self.llm_provider = 'rules'
             self.llm_available = False
-            print("ℹ️ LLM Agent: Rule-based fallback active")
+            print("[INFO] LLM Agent: Rule-based fallback active")
 
     @classmethod
     def set_api_key(cls, api_key):
@@ -576,7 +572,7 @@ class AutoMLChatAgent:
 
     def _handle_help(self, message, session_data):
         powered = {
-            'gemini': '🧠 **Powered by Google Gemini 1.5 Flash** (with conversation memory)',
+            'gemini': '🧠 **Powered by Google Gemini 2.5 Flash** (with conversation memory)',
             'openai': '🧠 **Powered by OpenAI GPT-4o-mini** (with conversation memory)',
             'local': '🤖 **Powered by Local LLM (Flan-T5)**',
             'rules': '💬 **Rule-based assistant**',
@@ -586,7 +582,7 @@ class AutoMLChatAgent:
 
     def _handle_greeting(self, message, session_data):
         provider_msg = {
-            'gemini': "I'm powered by **Google Gemini 1.5 Flash** with full context of your current session.",
+            'gemini': "I'm powered by **Google Gemini 2.5 Flash** with full context of your current session.",
             'openai': "I'm powered by **GPT-4o-mini** with full context of your current session.",
             'local': "I'm using a **local AI model** for privacy-first responses.",
             'rules': "I'm using **pattern matching** to help you navigate the platform.",
@@ -595,12 +591,6 @@ class AutoMLChatAgent:
         return {'text': f'👋 **Hello!** I am the AutoML Studio AI Assistant.\n\n{provider_msg}\n\nI can help you analyze your data, find correlations, explain models, and guide your ML pipeline. Try uploading a dataset and asking me: *"Show dataset summary"* or *"What correlates with the target?"*\n\nType **"help"** to see everything I can do!'}
 
     def _handle_unknown(self, message, session_data):
-        if self.llm_provider == 'gemini':
-            return {'text': '🤔 Let me think about that... (processing with Gemini)'}
-        if self.llm_provider == 'openai':
-            return {'text': '🤔 Let me think about that... (processing with GPT)'}
-        if self.llm_available:
-            return {'text': '🤔 Let me think about that... (Local LLM is processing)'}
         return {'text': '🤔 I\'m not sure how to handle that. Try asking about data exploration, predictions, or model explanations.\n\nType **"help"** for available commands.'}
 
     def _extract_column(self, message, df):
