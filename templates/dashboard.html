@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AutoML Studio </title>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
     <style>
         * {
@@ -47,10 +48,180 @@
 
         .layout {
             display: grid;
-            grid-template-columns: var(--sw) 1fr;
+            grid-template-columns: 72px 1fr;
             grid-template-rows: var(--hdr) 1fr;
             height: 100vh;
             background: var(--bg0)
+        }
+
+        /* PHASE NAVIGATION RAIL (LEFT side) */
+        .rail {
+            grid-column: 1;
+            grid-row: 2;
+            background: #1A1A2E; /* Premium dark navy */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 12px 0;
+            gap: 6px;
+            flex-shrink: 0;
+            border-right: 1px solid rgba(255, 255, 255, 0.08);
+            z-index: 10;
+        }
+
+        .rail-btn {
+            width: 58px;
+            height: 56px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: #6B6B8A;
+            position: relative;
+            transition: all 0.15s ease;
+            outline: none;
+        }
+
+        .rail-btn:hover {
+            background: #252540;
+            color: #C0C0D8;
+        }
+
+        .rail-btn.active {
+            background: #2A2A4A;
+            color: #818CF8; /* Vibrant light purple active */
+        }
+
+        .rail-btn i {
+            font-size: 20px;
+            line-height: 1;
+        }
+
+        .rail-btn span {
+            font-size: 10px;
+            font-weight: 600;
+            line-height: 1;
+            white-space: nowrap;
+            letter-spacing: 0.2px;
+        }
+
+        .rail-btn .rdot {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            font-size: 8px;
+            opacity: 0.6;
+        }
+
+        .rail-btn .rpip {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--danger);
+        }
+
+        .rail-sep {
+            width: 36px;
+            height: 1px;
+            background: #2A2A3E;
+            margin: 6px 0;
+        }
+
+        .rail-spacer {
+            flex: 1;
+        }
+
+        /* RIGHT COLUMN (TABS + CONTENT) */
+        .right-col {
+            grid-column: 2;
+            grid-row: 2;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg2);
+        }
+
+        /* HORIZONTAL TAB BAR */
+        .tabbar {
+            height: 40px;
+            background: var(--bg0);
+            border-bottom: 1px solid var(--bdr);
+            display: flex;
+            align-items: center;
+            padding: 0 8px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scrollbar-width: none; /* Firefox */
+            flex-shrink: 0;
+            z-index: 9;
+        }
+
+        .tabbar::-webkit-scrollbar {
+            display: none; /* Safari and Chrome */
+        }
+
+        .tab {
+            height: 40px;
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--txt2);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            white-space: nowrap;
+            flex-shrink: 0;
+            transition: all 0.15s ease;
+        }
+
+        .tab i {
+            font-size: 14px;
+        }
+
+        .tab:hover {
+            color: var(--txt);
+            background: var(--bg1);
+        }
+
+        .tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+            background: transparent;
+        }
+
+        .tab .tbadge {
+            font-size: 9px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 8px;
+            background: #EEF2FF;
+            color: var(--accent);
+        }
+
+        .tab .tbadge-r {
+            background: #FEE2E2;
+            color: var(--danger);
+        }
+
+        .tab .tnew {
+            font-size: 8px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 4px;
+            background: linear-gradient(135deg, #6366F1, #8B5CF6);
+            color: #fff;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
         }
 
         /* TOPBAR */
@@ -198,14 +369,7 @@
             flex-shrink: 0
         }
 
-        /* SIDEBAR */
-        .sidebar {
-            grid-column: 1;
-            border-right: 1px solid var(--bdr);
-            background: var(--bg0);
-            overflow-y: auto;
-            padding: 10px 0
-        }
+        /* SIDEBAR DEPRECATED */
 
         .nav-section {
             margin-bottom: 4px
@@ -294,19 +458,38 @@
 
         .new-tag {
             font-size: 8px;
-            background: var(--accent);
+            background: linear-gradient(135deg, #6366F1, #8B5CF6);
             color: #fff;
             padding: 2px 5px;
             border-radius: 5px;
             margin-left: auto;
-            font-weight: 700
+            font-weight: 700;
+            animation: newPulse 2s ease-in-out infinite;
+            text-transform: uppercase;
+            letter-spacing: .5px
         }
 
-        /* MAIN */
+        @keyframes newPulse {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: .75;
+                transform: scale(1.05);
+            }
+        }
+
+        /* MAIN OVERRIDES */
         .main {
-            grid-column: 2;
+            flex: 1;
+            height: 100%;
+            width: 100%;
             overflow-y: auto;
-            background: var(--bg2)
+            background: var(--bg2);
         }
 
         .page {
@@ -1448,6 +1631,196 @@
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
+
+        /* ═══ INTELLIGENCE LAB PREMIUM STYLES ═══ */
+        .il-hero {
+            text-align: center;
+            padding: 28px 20px;
+            border-radius: var(--r8);
+            border: 1px solid rgba(99, 102, 241, .2);
+            margin-bottom: 14px;
+            position: relative;
+            overflow: hidden
+        }
+
+        .il-hero::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(99, 102, 241, .06), rgba(139, 92, 246, .04), rgba(6, 182, 212, .06));
+            z-index: 0
+        }
+
+        .il-hero>* {
+            position: relative;
+            z-index: 1
+        }
+
+        .il-hero-val {
+            font-size: 48px;
+            font-weight: 900;
+            line-height: 1.1;
+            background: linear-gradient(135deg, var(--accent), #8B5CF6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent
+        }
+
+        .il-hero-lbl {
+            font-size: 11px;
+            color: var(--txt2);
+            text-transform: uppercase;
+            letter-spacing: .05em;
+            margin-top: 4px
+        }
+
+        .il-grade {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            font-size: 42px;
+            font-weight: 900;
+            border-width: 5px;
+            border-style: solid;
+            box-shadow: 0 0 25px rgba(99, 102, 241, .15)
+        }
+
+        .il-timeline {
+            position: relative;
+            padding-left: 24px;
+            margin: 10px 0
+        }
+
+        .il-timeline::before {
+            content: '';
+            position: absolute;
+            left: 8px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(to bottom, var(--accent), transparent)
+        }
+
+        .il-timeline-item {
+            position: relative;
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            background: var(--bg1);
+            border-radius: var(--r4);
+            border: 1px solid var(--bdr);
+            font-size: 12px
+        }
+
+        .il-timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -20px;
+            top: 14px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: 2px solid var(--bg0)
+        }
+
+        .il-metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 8px
+        }
+
+        .il-metric {
+            padding: 10px;
+            background: var(--bg1);
+            border-radius: var(--r4);
+            border: 1px solid var(--bdr);
+            text-align: center;
+            transition: transform .15s, box-shadow .15s
+        }
+
+        .il-metric:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, .08)
+        }
+
+        .il-metric-val {
+            font-size: 18px;
+            font-weight: 800;
+            color: var(--accent)
+        }
+
+        .il-metric-lbl {
+            font-size: 9px;
+            color: var(--txt2);
+            text-transform: uppercase;
+            letter-spacing: .03em;
+            margin-top: 2px
+        }
+
+        .il-glass {
+            background: rgba(255, 255, 255, .03);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, .08);
+            border-radius: var(--r8);
+            padding: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, .06)
+        }
+
+        @keyframes ilSlideUp {
+            from {
+                opacity: 0;
+                transform: translateY(16px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .il-animate {
+            animation: ilSlideUp .4s ease-out forwards
+        }
+
+        .il-badge-row {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin: 8px 0
+        }
+
+        .il-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-radius: 20px;
+            font-size: 10px;
+            font-weight: 600;
+            background: rgba(99, 102, 241, .08);
+            color: var(--accent);
+            border: 1px solid rgba(99, 102, 241, .15)
+        }
+
+        .il-badge.success {
+            background: rgba(34, 197, 94, .08);
+            color: #22C55E;
+            border-color: rgba(34, 197, 94, .15)
+        }
+
+        .il-badge.danger {
+            background: rgba(239, 68, 68, .08);
+            color: #EF4444;
+            border-color: rgba(239, 68, 68, .15)
+        }
+
+        .il-badge.warn {
+            background: rgba(245, 158, 11, .08);
+            color: #F59E0B;
+            border-color: rgba(245, 158, 11, .15)
+        }
     </style>
 </head>
 
@@ -1524,61 +1897,37 @@
         </div>
 
         <!-- SIDEBAR -->
-        <aside class="sidebar">
-            <div class="nav-section">
-                <div class="nav-label">Workspace</div>
-                <div class="nav-item active" id="nav-overview" onclick="nav('overview',this)"><span
-                        class="nav-ico">⬛</span>Overview</div>
-                <div class="nav-item" id="nav-pipeline" onclick="nav('pipeline',this)"><span
-                        class="nav-ico">〰</span>Pipeline<span class="nb nb-g" id="nb-pipeline"
-                        style="display:none">Done</span></div>
-                <div class="nav-item" id="nav-data" onclick="nav('data',this)"><span class="nav-ico">🗄</span>Data
-                    Explorer</div>
-                <div class="nav-item" id="nav-eda" onclick="nav('eda',this)"><span class="nav-ico">📊</span>Auto
-                    EDA</div>
-                <div class="nav-item" id="nav-visualization" onclick="nav('visualization',this)"><span
-                        class="nav-ico">📈</span>Visualization</div>
-            </div>
-            <div class="nav-div"></div>
-            <div class="nav-section">
-                <div class="nav-label">Supervised</div>
-                <div class="nav-item" id="nav-leaderboard" onclick="nav('leaderboard',this)"><span
-                        class="nav-ico">🏆</span>Leaderboard<span class="nb nb-b" id="nb-models">0</span></div>
-                <div class="nav-item" id="nav-explain" onclick="nav('explain',this)"><span
-                        class="nav-ico">🔍</span>Explainability</div>
-                <div class="nav-item" id="nav-fairness" onclick="nav('fairness',this)"><span
-                        class="nav-ico">⚖</span>Fairness<span class="nb nb-r" id="nb-fairness"
-                        style="display:none">!</span></div>
-                <div class="nav-item" id="nav-predict" onclick="nav('predict',this)"><span class="nav-ico">▶</span>Live
-                    Predict</div>
-            </div>
-            <div class="nav-div"></div>
-            <div class="nav-section">
-                <div class="nav-label">Unsupervised</div>
-                <div class="nav-item" id="nav-unsupervised" onclick="nav('unsupervised',this)"><span
-                        class="nav-ico">🔮</span>Unsupervised ML</div>
-            </div>
-            <div class="nav-div"></div>
-            <div class="nav-section">
-                <div class="nav-label">Ops</div>
-                <div class="nav-item" id="nav-drift" onclick="nav('drift',this)"><span class="nav-ico">⚠</span>Drift
-                    Monitor<span class="nb nb-r" id="nb-drift" style="display:none">!</span></div>
-                <div class="nav-item" id="nav-deploy" onclick="nav('deploy',this)"><span
-                        class="nav-ico">🚀</span>Deploy<span class="nb nb-g" id="nb-deploy"
-                        style="display:none">Live</span></div>
-                <div class="nav-item" id="nav-experiments" onclick="nav('experiments',this)"><span
-                        class="nav-ico">🧪</span>Experiments</div>
-                <div class="nav-item" id="nav-diagnostics" onclick="nav('diagnostics',this)"><span
-                        class="nav-ico">🩺</span>Diagnostics</div>
-            </div>
-            <div class="nav-div"></div>
-            <div class="nav-section">
-                <div class="nav-item" id="nav-assistant" onclick="nav('assistant',this)"><span
-                        class="nav-ico">💬</span>AI Assistant</div>
-                <div class="nav-item" id="nav-settings" onclick="nav('settings',this)"><span
-                        class="nav-ico">⚙</span>Settings</div>
-            </div>
-        </aside>
+        <nav class="rail" aria-label="Phase Navigation">
+            <button class="rail-btn active" id="rail-btn-prepare" onclick="setPhase('prepare', this)" title="Prepare">
+                <i class="ti ti-database"></i>
+                <span>Prepare</span>
+            </button>
+            <button class="rail-btn" id="rail-btn-train" onclick="setPhase('train', this)" title="Train">
+                <i class="ti ti-brain"></i>
+                <span>Train</span>
+            </button>
+            <button class="rail-btn" id="rail-btn-explain" onclick="setPhase('explain', this)" title="Explain">
+                <i class="ti ti-microscope"></i>
+                <span>Explain</span>
+            </button>
+            <button class="rail-btn" id="rail-btn-advance" onclick="setPhase('advance', this)" title="Advance">
+                <i class="ti ti-rocket"></i>
+                <span>Advance</span>
+            </button>
+            <button class="rail-btn" id="rail-btn-publish" onclick="setPhase('publish', this)" title="Publish">
+                <i class="ti ti-world-upload"></i>
+                <span>Publish</span>
+            </button>
+            <div class="rail-sep"></div>
+            <div class="rail-spacer"></div>
+            <button class="rail-btn" id="rail-btn-tools" onclick="setPhase('tools', this)" title="AI Lab">
+                <i class="ti ti-message-circle"></i>
+                <span>AI</span>
+            </button>
+        </nav>
+
+        <div class="right-col">
+            <div class="tabbar" id="tabBar"></div>
 
         <!-- MAIN -->
         <main class="main">
@@ -2460,8 +2809,246 @@
                 </div>
             </div>
 
+            <!-- ══ MODEL PROPHECY (Feature #1) ══ -->
+            <div class="page" id="page-prophecy">
+                <div class="pg-title">🔮 Model Prophecy Engine</div>
+                <div class="pg-sub">Predicts which algorithm will win — before training even starts. World-first: no
+                    other platform does this.</div>
+                <div class="alert al-i mb"><span class="al-ico">🧬</span>This analyzes your dataset's DNA (50+
+                    meta-features) and predicts the best model, estimated score, and training time.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Dataset DNA Analysis</span><button
+                            class="btn primary" id="btnProphecy" onclick="runProphecy()">🔮 Analyze Dataset DNA</button>
+                    </div>
+                    <div id="prophecyContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Upload a dataset and click
+                            <b>Analyze Dataset DNA</b> to get predictions before training.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ PREDICTION AUTOPSY (Feature #5) ══ -->
+            <div class="page" id="page-autopsy">
+                <div class="pg-title">🔬 Prediction Autopsy</div>
+                <div class="pg-sub">A detective-story explanation of WHY any prediction was made. World-first: nobody
+                    generates step-by-step decision narratives.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Select Sample to Autopsy</span></div>
+                    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px">
+                        <div class="inp-grp" style="flex:1"><span class="inp-lbl">Sample Index</span><input
+                                type="number" id="autopsyIdx" value="0" min="0" max="999" style="width:100%"></div>
+                        <button class="btn primary" id="btnAutopsy" onclick="runAutopsy()">🔬 Run Autopsy</button>
+                    </div>
+                    <div id="autopsyContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Enter a sample index and run the
+                            autopsy to see a step-by-step decision trace.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ DATA PRESCRIPTION (Feature #2) ══ -->
+            <div class="page" id="page-prescription">
+                <div class="pg-title">💊 Data Prescription Engine</div>
+                <div class="pg-sub">Tells you EXACTLY what data to collect to improve your model. World-first: no
+                    platform prescribes data collection strategy.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Data Collection Prescriptions</span><button
+                            class="btn primary" id="btnPrescription" onclick="runPrescription()">💊 Generate
+                            Prescription</button></div>
+                    <div id="prescriptionContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Train a model first, then generate
+                            prescriptions to discover what data you need to collect.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ ADVERSARIAL STRESS TEST (Feature #3) ══ -->
+            <div class="page" id="page-adversarial">
+                <div class="pg-title">🛡️ Adversarial Stress Test</div>
+                <div class="pg-sub">Automatically attacks your model to find weaknesses before deployment. World-first:
+                    no AutoML has automated adversarial testing.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Robustness Score Card</span><button
+                            class="btn primary" id="btnAdversarial" onclick="runAdversarial()"
+                            style="background:linear-gradient(135deg,#EF4444,#DC2626)">🛡️ Launch Stress Test</button>
+                    </div>
+                    <div id="adversarialContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Train a model first, then launch
+                            the adversarial stress test to find vulnerabilities.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ TOURNAMENT (Feature #9) ══ -->
+            <div class="page" id="page-tournament">
+                <div class="pg-title">⚔️ Model Tournament</div>
+                <div class="pg-sub">50+ model configurations compete in a bracket tournament. World-first: no platform
+                    visualizes model selection as a competition.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Tournament Bracket</span><button class="btn primary"
+                            id="btnTournament" onclick="runTournament()"
+                            style="background:linear-gradient(135deg,#F59E0B,#D97706)">⚔️ Start Tournament</button>
+                    </div>
+                    <div id="tournamentContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Upload a dataset and start the
+                            tournament to watch models compete live.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ MODEL SHELF-LIFE (Feature #4) ══ -->
+            <div class="page" id="page-shelflife">
+                <div class="pg-title">⏰ Model Shelf-Life Predictor</div>
+                <div class="pg-sub">Predicts WHEN your model will become stale. World-first: proactive drift prediction,
+                    not reactive detection.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Shelf-Life Forecast</span><button class="btn primary"
+                            id="btnShelflife" onclick="runShelflife()">⏰ Predict Shelf-Life</button></div>
+                    <div id="shelflifeContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Train a model first, then predict
+                            when it will need retraining.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ SELF-HEALING (Feature #6) ══ -->
+            <div class="page" id="page-selfheal">
+                <div class="pg-title">🧪 Self-Healing Pipeline</div>
+                <div class="pg-sub">Auto-diagnoses and fixes pipeline errors. World-first: no AutoML platform attempts
+                    self-repair.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Healing History</span><button class="btn primary"
+                            id="btnSelfheal" onclick="runSelfheal()">🧪 Check Healing Status</button></div>
+                    <div id="selfhealContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Self-healing activates
+                            automatically during pipeline runs. Check status here.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ FEATURE INTERACTION X-RAY (Feature #10) ══ -->
+            <div class="page" id="page-xray">
+                <div class="pg-title">🧮 Feature Interaction X-Ray</div>
+                <div class="pg-sub">Discovers pairwise and higher-order feature interactions. World-first: automated
+                    multi-way interaction discovery with explanations.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Interaction Map</span><button class="btn primary"
+                            id="btnXray" onclick="runXray()">🧮 Scan Interactions</button></div>
+                    <div id="xrayContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Train a model first, then scan for
+                            feature interactions.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ SAMPLE DIFFICULTY (Feature #12) ══ -->
+            <div class="page" id="page-difficulty">
+                <div class="pg-title">🎯 Sample Difficulty Scorer</div>
+                <div class="pg-sub">Rates every sample from easy to hard. Finds mislabeled candidates and boundary
+                    cases.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Difficulty Analysis</span><button class="btn primary"
+                            id="btnDifficulty" onclick="runDifficulty()">🎯 Score Samples</button></div>
+                    <div id="difficultyContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Train a model first, then score
+                            sample difficulty.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ ERROR SLICING (Feature #18) ══ -->
+            <div class="page" id="page-errslice">
+                <div class="pg-title">🔪 Error Slice Analysis</div>
+                <div class="pg-sub">Automatically finds subgroups where the model fails or excels. World-first automated
+                    slice discovery.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Error Slices</span><button class="btn primary"
+                            id="btnErrslice" onclick="runErrslice()">🔪 Slice Errors</button></div>
+                    <div id="errsliceContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Train a model first, then discover
+                            error slices.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ CONFORMAL PREDICTION (Feature #11) ══ -->
+            <div class="page" id="page-conformal">
+                <div class="pg-title">📐 Conformal Prediction</div>
+                <div class="pg-sub">Mathematically guaranteed prediction intervals and prediction sets.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Conformal Guarantees</span><button
+                            class="btn primary" id="btnConformal" onclick="runConformal()">📐 Build Conformal
+                            Predictor</button></div>
+                    <div id="conformalContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Train a model first, then build
+                            conformal prediction sets.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ LEARNING CURVE (Feature #13) ══ -->
+            <div class="page" id="page-learncurve">
+                <div class="pg-title">📈 Learning Curve Predictor</div>
+                <div class="pg-sub">Extrapolates how much more data would improve performance. Fits power-law curves.
+                </div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Learning Curve Forecast</span><button
+                            class="btn primary" id="btnLearncurve" onclick="runLearncurve()">📈 Predict Learning
+                            Curve</button></div>
+                    <div id="learncurveContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Train a model first, then predict
+                            the learning curve.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ CV STABILITY (Feature #19) ══ -->
+            <div class="page" id="page-cvstability">
+                <div class="pg-title">🔄 CV Stability Report</div>
+                <div class="pg-sub">Tracks per-sample prediction stability across cross-validation folds. Identifies
+                    flip-flop samples.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Stability Analysis</span><button class="btn primary"
+                            id="btnCvstability" onclick="runCvstability()">🔄 Analyze CV Stability</button></div>
+                    <div id="cvstabilityContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Train a model first, then analyze
+                            CV stability.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ DATA SUFFICIENCY (Feature #25) ══ -->
+            <div class="page" id="page-sufficiency">
+                <div class="pg-title">📊 Data Sufficiency Calculator</div>
+                <div class="pg-sub">Estimates whether your dataset has enough samples for reliable modeling.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Sufficiency Verdict</span><button class="btn primary"
+                            id="btnSufficiency" onclick="runSufficiency()">📊 Check Data Sufficiency</button></div>
+                    <div id="sufficiencyContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Upload a dataset to check if you
+                            have enough data.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ RESEARCH PAPER (Feature #7) ══ -->
+            <div class="page" id="page-paper">
+                <div class="pg-title">📖 Auto Research Paper</div>
+                <div class="pg-sub">Generates a structured research paper from your experiment. World-first: full
+                    academic paper with all sections.</div>
+                <div class="card mb">
+                    <div class="card-hdr"><span class="card-title">Generated Paper</span><button class="btn primary"
+                            id="btnPaper" onclick="runPaper()">📖 Generate Research Paper</button></div>
+                    <div id="paperContent">
+                        <div style="text-align:center;padding:40px;color:var(--txt2)">Complete a full experiment first,
+                            then generate your research paper.</div>
+                    </div>
+                </div>
+            </div>
+
         </main>
     </div>
+</div>
 
     <div class="toast" id="toast"></div>
 
@@ -2526,7 +3113,7 @@
         // ═══════════════════════════════════════════
         // STATE
         // ═══════════════════════════════════════════
-        let S = {
+        window.S = {
             sessionId: localStorage.getItem('aml_sid') || null,
             fileName: localStorage.getItem('aml_file') || null,
             profileData: null,
@@ -2556,14 +3143,195 @@
         let pendingFile = null;
 
         // ═══════════════════════════════════════════
-        // NAVIGATION
+        // DYNAMIC WORKFLOW ROUTING SYSTEM
         // ═══════════════════════════════════════════
+        const originalGetElementById = document.getElementById;
+        window.virtualBadges = {};
+
+        document.getElementById = function(id) {
+            const el = originalGetElementById.call(document, id);
+            if (el) return el;
+            
+            if (['nb-pipeline', 'nb-models', 'nb-fairness', 'nb-drift', 'nb-deploy'].includes(id)) {
+                if (!window.virtualBadges[id]) {
+                    window.virtualBadges[id] = {
+                        style: { display: 'none' },
+                        textContent: id === 'nb-models' ? '0' : (id === 'nb-pipeline' ? 'Done' : (id === 'nb-deploy' ? 'Live' : '!'))
+                    };
+                }
+                
+                return new Proxy(window.virtualBadges[id], {
+                    set(target, prop, value) {
+                        if (prop === 'textContent') {
+                            target.textContent = value;
+                            const actualEl = originalGetElementById.call(document, id);
+                            if (actualEl) actualEl.textContent = value;
+                        }
+                        return true;
+                    },
+                    get(target, prop) {
+                        if (prop === 'style') {
+                            return new Proxy(target.style, {
+                                set(styleTarget, styleProp, styleValue) {
+                                    styleTarget[styleProp] = styleValue;
+                                    const actualEl = originalGetElementById.call(document, id);
+                                    if (actualEl) actualEl.style[styleProp] = styleValue;
+                                    return true;
+                                }
+                            });
+                        }
+                        return target[prop];
+                    }
+                });
+            }
+            return null;
+        };
+
+        const PHASES = {
+            prepare: [
+                { id: 'overview', label: 'Overview', icon: 'ti-home' },
+                { id: 'pipeline', label: 'Pipeline', icon: 'ti-route', badge: 'nb-pipeline' },
+                { id: 'data', label: 'Data Explorer', icon: 'ti-table' },
+                { id: 'eda', label: 'Auto EDA', icon: 'ti-chart-bar' },
+                { id: 'visualization', label: 'Visualization', icon: 'ti-chart-line' },
+                { id: 'unsupervised', label: 'Unsupervised ML', icon: 'ti-flask' }
+            ],
+            train: [
+                { id: 'leaderboard', label: 'Leaderboard', icon: 'ti-trophy', badge: 'nb-models' },
+                { id: 'diagnostics', label: 'Diagnostics', icon: 'ti-stethoscope' },
+                { id: 'fairness', label: 'Fairness', icon: 'ti-scale', badge: 'nb-fairness' },
+                { id: 'predict', label: 'Live Predict', icon: 'ti-player-play' }
+            ],
+            explain: [
+                { id: 'explain', label: 'Explainability', icon: 'ti-search' },
+                { id: 'autopsy', label: 'Autopsy', icon: 'ti-microscope' },
+                { id: 'xray', label: 'Feature X-Ray', icon: 'ti-dna' },
+                { id: 'errslice', label: 'Error Slicing', icon: 'ti-cut' },
+                { id: 'difficulty', label: 'Sample Difficulty', icon: 'ti-target' },
+                { id: 'conformal', label: 'Conformal Predict', icon: 'ti-math' },
+                { id: 'cvstability', label: 'CV Stability', icon: 'ti-refresh' },
+                { id: 'learncurve', label: 'Learning Curve', icon: 'ti-trending-up' }
+            ],
+            advance: [
+                { id: 'prophecy', label: 'Model Prophecy', icon: 'ti-crystal-ball' },
+                { id: 'tournament', label: 'Tournament', icon: 'ti-sword' },
+                { id: 'prescription', label: 'Data Prescription', icon: 'ti-pill' },
+                { id: 'sufficiency', label: 'Data Sufficiency', icon: 'ti-chart-pie' },
+                { id: 'adversarial', label: 'Adversarial Test', icon: 'ti-shield' },
+                { id: 'selfheal', label: 'Self-Healing', icon: 'ti-heart-rate-monitor' },
+                { id: 'shelflife', label: 'Model Shelf-Life', icon: 'ti-hourglass' }
+            ],
+            publish: [
+                { id: 'drift', label: 'Drift Monitor', icon: 'ti-alert-triangle', badge: 'nb-drift' },
+                { id: 'deploy', label: 'Deploy', icon: 'ti-rocket', badge: 'nb-deploy' },
+                { id: 'experiments', label: 'Experiments', icon: 'ti-test-pipe' },
+                { id: 'paper', label: 'Research Paper', icon: 'ti-book' }
+            ],
+            tools: [
+                { id: 'assistant', label: 'AI Assistant', icon: 'ti-message-circle' }
+            ]
+        };
+
+        function findPhaseByPageId(pageId) {
+            for (const [phase, tabs] of Object.entries(PHASES)) {
+                if (tabs.some(t => t.id === pageId)) {
+                    return phase;
+                }
+            }
+            return null;
+        }
+
+        function saveBadgeStates() {
+            ['nb-pipeline', 'nb-models', 'nb-fairness', 'nb-drift', 'nb-deploy'].forEach(id => {
+                const el = originalGetElementById.call(document, id);
+                if (el) {
+                    window.virtualBadges[id] = {
+                        style: { display: el.style.display },
+                        textContent: el.textContent
+                    };
+                }
+            });
+        }
+
+        function getBadgeHtml(badgeId) {
+            if (!badgeId) return '';
+            if (!window.virtualBadges[badgeId]) {
+                window.virtualBadges[badgeId] = {
+                    style: { display: badgeId === 'nb-models' ? '' : 'none' },
+                    textContent: badgeId === 'nb-models' ? '0' : (badgeId === 'nb-pipeline' ? 'Done' : (badgeId === 'nb-deploy' ? 'Live' : '!'))
+                };
+            }
+            const vb = window.virtualBadges[badgeId];
+            const cls = badgeId === 'nb-models' ? 'nb nb-b' : ((badgeId === 'nb-pipeline' || badgeId === 'nb-deploy') ? 'nb nb-g' : 'nb nb-r');
+            return `<span class="${cls}" id="${badgeId}" style="display: ${vb.style.display}">${vb.textContent}</span>`;
+        }
+
+        window.setPhase = function(phaseId, btnEl, targetPageId) {
+            const activeRail = document.querySelector('.rail-btn.active');
+            if (activeRail) activeRail.classList.remove('active');
+            
+            let railBtn = btnEl;
+            if (!railBtn) railBtn = document.getElementById('rail-btn-' + phaseId);
+            if (railBtn) railBtn.classList.add('active');
+            
+            saveBadgeStates();
+            
+            const firstPageId = targetPageId || (PHASES[phaseId] && PHASES[phaseId][0] && PHASES[phaseId][0].id);
+            renderTabBar(phaseId, firstPageId);
+        };
+
+        function renderTabBar(phaseId, activePageId) {
+            const tabBar = document.getElementById('tabBar');
+            if (!tabBar) return;
+            
+            const tabs = PHASES[phaseId] || [];
+            let html = '';
+            tabs.forEach(t => {
+                const activeClass = t.id === activePageId ? 'active' : '';
+                const badgeHtml = getBadgeHtml(t.badge);
+                html += `
+                    <div class="tab ${activeClass}" id="tab-${t.id}" onclick="nav('${t.id}', this)">
+                        <i class="ti ${t.icon}"></i>
+                        <span>${t.label}</span>
+                        ${badgeHtml}
+                    </div>
+                `;
+            });
+            tabBar.innerHTML = html;
+            
+            const activeTabEl = document.getElementById('tab-' + activePageId);
+            nav(activePageId, activeTabEl);
+        }
+
+        // NAVIGATION
         function nav(name, el) {
+            const phase = findPhaseByPageId(name);
+            if (phase) {
+                const activeRail = document.querySelector('.rail-btn.active');
+                const targetRail = document.getElementById('rail-btn-' + phase);
+                
+                if (!activeRail || activeRail !== targetRail) {
+                    if (activeRail) activeRail.classList.remove('active');
+                    if (targetRail) targetRail.classList.add('active');
+                    saveBadgeStates();
+                    renderTabBar(phase, name);
+                    return;
+                }
+            }
+
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            document.querySelectorAll('.tabbar .tab').forEach(t => t.classList.remove('active'));
+            
             const pg = document.getElementById('page-' + name);
             if (pg) pg.classList.add('active');
-            if (el) el.classList.add('active');
+            
+            if (el) {
+                el.classList.add('active');
+            } else {
+                const tabEl = document.getElementById('tab-' + name);
+                if (tabEl) tabEl.classList.add('active');
+            }
+
             // Load page data
             const loaders = {
                 leaderboard: 'loadLeaderboard',
@@ -2575,6 +3343,21 @@
                 experiments: 'loadExperiments',
                 visualization: 'loadVisualization',
                 unsupervised: 'loadUnsupervised',
+                prophecy: 'loadProphecy',
+                autopsy: 'loadAutopsy',
+                prescription: 'loadPrescription',
+                adversarial: 'loadAdversarial',
+                tournament: 'loadTournament',
+                shelflife: 'loadShelflife',
+                selfheal: 'loadSelfheal',
+                xray: 'loadXray',
+                difficulty: 'loadDifficulty',
+                errslice: 'loadErrslice',
+                conformal: 'loadConformal',
+                learncurve: 'loadLearncurve',
+                cvstability: 'loadCvstability',
+                sufficiency: 'loadSufficiency',
+                paper: 'loadPaper',
             };
             const loaderName = loaders[name];
             if (loaderName && typeof window[loaderName] === 'function') {
@@ -2582,7 +3365,10 @@
             }
             updateSettingsInfo();
         }
-        function navTo(name) { nav(name, document.getElementById('nav-' + name)); }
+
+        window.nav = nav;
+
+        function navTo(name) { nav(name, null); }
 
         // ═══════════════════════════════════════════
         // TABS
@@ -2663,8 +3449,32 @@
             el.className = 'step-item ' + state;
             const cEl = el.querySelector('.step-c');
             const lbl = el.querySelector('.step-lbl');
-            if (state === 'done') { cEl.textContent = '✓'; }
-            if (state === 'active') { cEl.style.background = 'var(--accent)'; cEl.style.borderColor = 'var(--accent)'; cEl.style.color = '#fff'; }
+            
+            // Clear any active/done styles first
+            cEl.style.background = '';
+            cEl.style.borderColor = '';
+            cEl.style.color = '';
+            
+            const stepNumbers = {
+                upload: '1',
+                clean: '2',
+                transform: '3',
+                train: '4',
+                tune: '5',
+                retrain: '6',
+                monitor: '7'
+            };
+            
+            if (state === 'done') {
+                cEl.textContent = '✓';
+            } else if (state === 'active') {
+                cEl.style.background = 'var(--accent)';
+                cEl.style.borderColor = 'var(--accent)';
+                cEl.style.color = '#fff';
+                cEl.textContent = stepNumbers[id] || '';
+            } else {
+                cEl.textContent = stepNumbers[id] || '';
+            }
         }
         function setProgress(pct, msg) {
             document.getElementById('pipelineProgress').style.width = pct + '%';
@@ -2902,6 +3712,25 @@
 
         function populateProfile(data) {
             data = normalizeProfileData(data);
+            
+            // Project info card (populate early)
+            const infoCard = document.getElementById('projectInfoCard');
+            if (infoCard) {
+                infoCard.style.display = '';
+                document.getElementById('ovProblemStatement').textContent = S.problemStatement || data.problem_statement || 'AutoML Pipeline Run';
+                const pt = data.problem_type || '—';
+                const ptEl = document.getElementById('ovProblemType');
+                if (ptEl) {
+                    if (pt !== '—') {
+                        ptEl.textContent = pt.charAt(0).toUpperCase() + pt.slice(1);
+                        ptEl.innerHTML += pt === 'classification' ? ' <span class="tag tb" style="margin-left:4px">🏷️</span>' : pt === 'regression' ? ' <span class="tag tg" style="margin-left:4px">📈</span>' : '';
+                    } else {
+                        ptEl.textContent = '—';
+                    }
+                }
+                document.getElementById('ovTargetCol').textContent = S.targetColumn || data.target_column || data.recommended_target || '—';
+            }
+
             // Overview profile card
             const prof = document.getElementById('ovProfile');
             if (prof) prof.innerHTML = `
@@ -4616,6 +5445,61 @@ print("\\n✅ Pipeline complete!")
             askAI(msg);
         }
 
+        function formatMarkdown(text) {
+            if (!text) return '';
+            
+            // Escape HTML characters to prevent XSS
+            let html = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Code blocks
+            html = html.replace(/```([\s\S]*?)```/g, (match, code) => {
+                return `<pre style="background:var(--bg3);padding:10px;border-radius:6px;font-family:var(--mono);font-size:11px;overflow-x:auto;margin:8px 0;border:1px solid var(--border)">${code.trim()}</pre>`;
+            });
+
+            // Inline code
+            html = html.replace(/`([^`]+)`/g, '<code style="background:var(--bg3);padding:2px 4px;border-radius:4px;font-family:var(--mono);font-size:11px;border:1px solid var(--border)">$1</code>');
+
+            // Headers
+            html = html.replace(/^### (.*$)/gim, '<h4 style="margin:8px 0 4px;font-size:13px;font-weight:700;color:var(--txt)">$1</h4>');
+            html = html.replace(/^## (.*$)/gim, '<h3 style="margin:10px 0 6px;font-size:14px;font-weight:700;color:var(--txt)">$1</h3>');
+            html = html.replace(/^# (.*$)/gim, '<h2 style="margin:12px 0 8px;font-size:15px;font-weight:700;color:var(--txt)">$1</h2>');
+
+            // Bold
+            html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+            // Bullet points
+            const lines = html.split('\n');
+            let inList = false;
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i].trim();
+                if (line.startsWith('* ') || line.startsWith('- ') || line.startsWith('• ')) {
+                    const content = line.substring(2).trim();
+                    if (!inList) {
+                        lines[i] = '<ul style="margin:6px 0;padding-left:20px;list-style-type:disc"><li style="margin-bottom:4px">' + content + '</li>';
+                        inList = true;
+                    } else {
+                        lines[i] = '<li style="margin-bottom:4px">' + content + '</li>';
+                    }
+                } else {
+                    if (inList) {
+                        lines[i - 1] += '</ul>';
+                        inList = false;
+                    }
+                    if (line === '') {
+                        lines[i] = '<div style="height:8px"></div>';
+                    }
+                }
+            }
+            if (inList) {
+                lines[lines.length - 1] += '</ul>';
+            }
+            
+            return lines.join('\n').replace(/\n/g, '<br>').replace(/<br><ul/g, '<ul').replace(/<\/ul><br>/g, '</ul>');
+        }
+
         async function askAI(message) {
             if (document.querySelector('.nav-item.active')?.id !== 'nav-assistant') navTo('assistant');
 
@@ -4626,95 +5510,90 @@ print("\\n✅ Pipeline complete!")
             um.className = 'msg-user'; um.textContent = message; msgs.appendChild(um);
 
             const thinking = document.createElement('div');
-            thinking.className = 'msg-thinking'; thinking.textContent = '⋯ Claude is thinking…'; msgs.appendChild(thinking);
+            const modelLabel = getModelLabel();
+            thinking.className = 'msg-thinking'; thinking.textContent = `⋯ ${modelLabel} is thinking…`; msgs.appendChild(thinking);
             msgs.scrollTop = msgs.scrollHeight;
             btn.disabled = true;
 
             chatHistory.push({ role: 'user', content: message });
 
-            const lb = S.trainResults?.leaderboard || [];
-            const best = lb[0] || {};
-            const metrics = best.metrics || {};
-            const score = ((best.primary_metric ?? metrics.f1 ?? metrics.accuracy ?? 0) * 100).toFixed(1);
-
-            const systemPrompt = `You are an AI assistant embedded in AutoML Studio v4.0, a machine learning platform. Current project context:
-- Dataset: ${S.fileName || 'Unknown'} (${S.profileData?.n_rows || '?'} rows × ${S.profileData?.n_cols || '?'} columns)
-- Target: ${S.profileData?.target_column || S.profileData?.recommended_target || '?'}
-- Problem type: ${S.profileData?.problem_type || '?'}
-- Best model: ${best.model || best.model_name || '?'} (${score}% accuracy)
-- Models trained: ${lb.length}
-- Session: ${S.sessionId || 'none'}
-
-Be concise, technical, and actionable. Use bullet points when listing steps. Keep responses under 200 words unless the question needs more.`;
-
-            if (!S.apiKey) {
-                thinking.remove();
-                btn.disabled = false;
-                const staticResp = getStaticResponse(message);
-                const am = document.createElement('div');
-                am.className = 'msg-ai';
-                am.innerHTML = staticResp + '\n\n<em style="font-size:9px;color:var(--txt2)">💡 Add Gemini API key in Settings for real AI responses.</em>';
-                msgs.appendChild(am); msgs.scrollTop = msgs.scrollHeight;
-                chatHistory.push({ role: 'model', content: staticResp });
-                return;
-            }
-
             try {
-                const geminiHistory = chatHistory.map(msg => ({
-                    role: msg.role === 'assistant' ? 'model' : msg.role,
-                    parts: [{ text: msg.content }]
-                }));
-
-                const modelId = S.modelId || 'gemini-2.5-flash';
-                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${S.apiKey}`, {
+                const res = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        system_instruction: { parts: { text: systemPrompt } },
-                        contents: geminiHistory
+                        message: message,
+                        session_id: S.sessionId
                     })
                 });
+
+                if (!res.ok) {
+                    throw new Error(`HTTP error! status: ${res.status}`);
+                }
+
                 const data = await res.json();
                 thinking.remove();
                 btn.disabled = false;
 
                 if (data.error) {
-                    throw new Error(data.error.message || 'API Error');
+                    throw new Error(data.error);
                 }
 
-                const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '⚠ No response';
+                const text = data.response || '⚠ No response';
                 const am = document.createElement('div');
-                am.className = 'msg-ai'; am.textContent = text;
+                am.className = 'msg-ai';
+                am.innerHTML = formatMarkdown(text);
                 msgs.appendChild(am); msgs.scrollTop = msgs.scrollHeight;
                 chatHistory.push({ role: 'assistant', content: text });
             } catch (e) {
                 thinking.remove(); btn.disabled = false;
                 const am = document.createElement('div');
-                am.className = 'msg-ai'; am.textContent = '⚠ API error: ' + e.message;
+                am.className = 'msg-ai';
+                am.innerHTML = `<span style="color:var(--danger)">⚠ Error calling AI assistant: ${e.message}</span>`;
                 msgs.appendChild(am); msgs.scrollTop = msgs.scrollHeight;
             }
         }
 
-        function getStaticResponse(msg) {
-            const l = msg.toLowerCase();
-            if (l.includes('drift')) return '📊 Drift alerts indicate distribution shift between training and production data.\n\nSteps to handle drift:\n• Collect fresh labeled data from the current distribution\n• Retrain model with combined historical + new data\n• Adjust PSI threshold in settings if needed\n• Set up automated weekly retraining checks';
-            if (l.includes('shap')) return '📈 SHAP values show each feature\'s contribution to predictions.\n\n• Positive SHAP: feature pushes prediction higher\n• Negative SHAP: feature pushes prediction lower\n• Global importance = mean |SHAP| across all samples\n\nHigher importance = feature has bigger average impact on your model\'s output.';
-            if (l.includes('fairness') || l.includes('bias')) return '⚖️ To fix fairness gaps:\n\n1. Reweighing: Upweight underrepresented groups during training\n2. Threshold tuning: Different decision thresholds per group\n3. Remove sensitive features: Exclude protected attributes and audit proxy features\n4. Collect balanced data: Ensure training represents all groups equally';
-            if (l.includes('feature engineering') || l.includes('improve')) return '🔧 Feature engineering ideas:\n\n• Create ratio features (e.g., score1/score2)\n• Interaction terms between categorical + numeric\n• Log-transform skewed numeric features\n• Bin continuous variables into meaningful ranges\n• Aggregate stats: mean, std, min/max per group\n• Lag features for time-based patterns';
-            if (l.includes('deploy') || l.includes('production')) return '🚀 Production deployment checklist:\n\n✅ Model versioning + artifact storage\n✅ REST API health endpoint (/health)\n✅ Input validation (type + range checks)\n✅ Drift monitoring (PSI alerts)\n⚠ Canary deployment (5% traffic first)\n⚠ Rollback strategy (keep prior artifacts)\n⚠ SLA targets: p95 latency < 50ms, 99.9% uptime';
-            return '🤖 I\'m your AutoML Studio assistant. To get full Claude AI responses, add your Anthropic API key in Settings.\n\nI can help with:\n• Model comparison & feature importance\n• Drift analysis & retraining strategy\n• Fairness mitigation techniques\n• Feature engineering ideas\n• Production deployment guidance';
+        function getModelLabel() {
+            const modelId = (S.modelId || '').toLowerCase();
+            if (modelId.includes('gemini')) return 'Gemini';
+            if (modelId.includes('claude') || modelId.includes('anthropic')) return 'Claude';
+            if (modelId.includes('gpt') || modelId.includes('openai')) return 'GPT';
+            return 'AI';
         }
 
         // ═══════════════════════════════════════════
         // SETTINGS
         // ═══════════════════════════════════════════
-        function saveApiSettings() {
+        async function saveApiSettings() {
             S.apiKey = document.getElementById('apiKeyInput').value.trim();
             S.modelId = document.getElementById('modelSelect').value;
             localStorage.setItem('aml_key', S.apiKey);
             localStorage.setItem('aml_model', S.modelId);
             document.getElementById('ctxLLM').textContent = S.modelId;
-            toast(S.apiKey ? '✅ API settings saved — AI assistant ready!' : '⚠ API key cleared');
+
+            if (!S.apiKey) {
+                toast('⚠ API key cleared — AI will use fallback mode');
+                return;
+            }
+
+            // Send to backend so the server can use it
+            try {
+                const res = await fetch('/api/set-api-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: S.apiKey })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    toast(`✅ AI assistant activated — using ${data.provider}`);
+                    document.getElementById('ctxLLM').textContent = data.provider;
+                } else {
+                    toast(`⚠ ${data.message || data.error || 'Key saved but AI init failed'}`);
+                }
+            } catch (e) {
+                toast('⚠ Key saved locally but could not reach server: ' + e.message);
+            }
         }
 
         function normalizeModelId(modelId) {
@@ -4730,6 +5609,17 @@ Be concise, technical, and actionable. Use bullet points when listing steps. Kee
             localStorage.setItem('aml_model', S.modelId);
             document.getElementById('modelSelect').value = S.modelId;
             document.getElementById('ctxLLM').textContent = S.modelId;
+
+            // Send saved key to backend on page load so AI persists across refreshes
+            if (S.apiKey) {
+                fetch('/api/set-api-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: S.apiKey })
+                }).then(r => r.json()).then(data => {
+                    if (data.provider) document.getElementById('ctxLLM').textContent = data.provider;
+                }).catch(() => {});
+            }
         }
 
         function clearSession() {
@@ -4834,10 +5724,20 @@ Be concise, technical, and actionable. Use bullet points when listing steps. Kee
                 const data = await res.json();
                 if (data.error) throw new Error(data.error);
 
+                // Robustly restore filename from upload path if available
+                if (data.upload_path) {
+                    const fname = data.upload_path.split(/[\\/]/).pop().replace(/\.[^/.]+$/, '');
+                    if (fname) {
+                        S.fileName = fname;
+                        localStorage.setItem('aml_file', fname);
+                    }
+                }
+
                 S.profileData = data.profile || data;
                 S.trainResults = data.training_results || data.results || null;
 
                 if (S.profileData) populateProfile(S.profileData);
+                if (data.clean_report || data.transform_report) populatePipelineReports(data);
 
                 if (S.trainResults) {
                     document.getElementById('overviewEmpty').style.display = 'none';
@@ -4856,10 +5756,125 @@ Be concise, technical, and actionable. Use bullet points when listing steps. Kee
                     loadRecommendations();
                     loadShap();
                     toast('✅ Session restored: ' + S.fileName);
+                    
+                    // If returning to a fully completed pipeline, default to the overview.
+                    // The INIT script already calls setPhase('prepare', null, 'overview'), so no action needed.
+                } else if (data.status === 'processing' || data.status === 'started' || data.current_step) {
+                    // Pipeline is running or paused between steps
+                    document.getElementById('overviewEmpty').style.display = 'none';
+                    document.getElementById('overviewContent').style.display = 'block';
+                    document.getElementById('pipelineBadge').style.display = '';
+                    document.getElementById('exportBtn').style.display = 'none';
+                    document.getElementById('newExpBtn').style.display = '';
+                    document.getElementById('overviewSub').textContent = S.fileName + ' · Training…';
+                    document.getElementById('projectBadge').textContent = S.fileName + ' · Running pipeline…';
+                    document.getElementById('pipelineStatus').textContent = 'Running…';
+                    document.getElementById('modalProgTrack').style.display = '';
+                    
+                    // Route to the pipeline progress view so the user sees it running!
+                    if (window.setPhase) {
+                        setPhase('prepare', null, 'pipeline');
+                    } else if (window.navTo) {
+                        navTo('pipeline');
+                    }
+                    
+                    resumePipelineOrchestration(data);
                 }
             } catch (e) {
                 console.warn('Session restore failed:', e.message);
                 handleSessionLost('Stored session is no longer valid.');
+            }
+        }
+
+        async function resumePipelineOrchestration(data) {
+            try {
+                let d = data;
+                if (d.progress_message) setProgress(d.progress || 0, d.progress_message);
+                
+                // Initialize all steps, then mark previous steps as done
+                const allSteps = ['upload', 'clean', 'transform', 'train', 'tune', 'retrain', 'monitor'];
+                allSteps.forEach(s => setStep(s, ''));
+                let currentIdx = allSteps.indexOf(d.current_step);
+                if (currentIdx === -1) currentIdx = 0;
+                allSteps.forEach((s, idx) => {
+                    if (idx < currentIdx) setStep(s, 'done');
+                });
+                
+                // 1. Reconnect to Clean / Transform
+                if (d.current_step === 'upload' || d.current_step === 'clean' || d.current_step === 'transform') {
+                    setStep('clean', 'active');
+                    toast('Reconnecting to active data cleaning task...');
+                    d = await pollStatus('train', 300000);
+                    populatePipelineReports(d);
+                }
+
+                // 2. Reconnect to Train (or start it if it was paused)
+                if (d.current_step === 'train') {
+                    if (d.status === 'complete') {
+                        setStep('train', 'active');
+                        setProgress(42, '🤖 Training models… (resuming paused task)');
+                        const trainRes = await fetch('/api/train', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ session_id: S.sessionId })
+                        });
+                        const trainInit = await trainRes.json();
+                        if (trainInit.error) throw new Error(trainInit.error);
+                    } else if (d.status === 'processing') {
+                        setStep('train', 'active');
+                        setProgress(42, '🤖 Training models… (reconnecting to active task)');
+                    }
+                    
+                    let trainData;
+                    try {
+                        trainData = await pollStatus('results', 900000);
+                    } catch (e) {
+                        if ((e.message || '').toLowerCase().includes('timeout')) {
+                            setProgress(65, '⏳ Training is taking longer than expected...');
+                            trainData = await pollStatus('results', 900000);
+                        } else throw e;
+                    }
+                    
+                    S.trainResults = trainData.training_results || trainData.results;
+                    setStep('train', 'done');
+                    setProgress(65, '✅ Training done — ' + (S.trainResults?.leaderboard?.length || 0) + ' models');
+                    toast('🤖 Training complete!');
+                    
+                    // 3. Reconnect to Tune (always run if we reach here)
+                    setStep('tune', 'active');
+                    setProgress(70, '⚡ Tuning hyperparameters…');
+                    try {
+                        const tuneRes = await fetch(`/api/optimize/${S.sessionId}`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ method: 'auto', budget: 20 })
+                        });
+                        const tuneData = await tuneRes.json();
+                        if (!tuneData.error) {
+                            const sr = await fetch(`/api/status/${S.sessionId}`);
+                            const sd = await sr.json();
+                            if (sd.training_results) S.trainResults = sd.training_results;
+                        }
+                    } catch { }
+                    setStep('tune', 'done');
+                    setProgress(100, '✅ Pipeline complete — review results & retrain when ready');
+                    
+                    // 4. Finalize UI
+                    populateResults(S.trainResults);
+                    updateTopbar();
+                    ['upload', 'clean', 'transform', 'train', 'tune', 'retrain'].forEach(s => setStep(s, 'done'));
+                    setStep('monitor', 'active');
+                    document.getElementById('pipelineProgress').style.width = '100%';
+                    document.getElementById('pipelineMsg').textContent = '🎉 Pipeline complete!';
+                    document.getElementById('pipelineStatus').textContent = '5/6 Complete';
+                    document.getElementById('nb-pipeline').style.display = '';
+                    document.getElementById('nb-deploy').style.display = '';
+                    document.getElementById('retrainOverviewBtn').style.display = '';
+                    loadRecommendations();
+                    loadShap();
+                    toast('🎉 Pipeline execution resumed and completed!');
+                }
+            } catch (err) {
+                console.error('Resume failed:', err);
+                toast('Error resuming pipeline: ' + err.message);
             }
         }
 
@@ -5349,8 +6364,11 @@ Be concise, technical, and actionable. Use bullet points when listing steps. Kee
             initTopUserAvatar();
             restoreApiInputs();
             restoreSession();
+            setPhase('prepare', null, 'overview');
         }
     </script>
+    <script src="/static/intelligence.js"></script>
+    <script src="/static/intelligence2.js"></script>
 </body>
 
 </html>

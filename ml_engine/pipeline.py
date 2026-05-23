@@ -175,6 +175,7 @@ class PipelineSession:
             'current_step': self.current_step,
             'is_timeseries': self.is_timeseries,
             'experiment_id': self.experiment_id,
+            'upload_path': self.upload_path,
         }
 
 
@@ -193,6 +194,9 @@ class PipelineManager:
         
         # Multi-dataset management
         self.datasets = {}  # dataset_id -> {name, path, profile, uploaded_at}
+        
+        # Initialize LLM Chat Agent
+        self.chat_agent = AutoMLChatAgent()
     
     def create_session(self):
         session = PipelineSession()
@@ -1227,30 +1231,28 @@ class PipelineManager:
         
         result = session.to_dict()
         
-        if session.status == 'complete':
-            # Always expose profile and step outputs once complete, regardless of current_step
-            # (e.g., current_step can be 'tune' after optimization).
-            if session.profile:
-                result['profile'] = session.profile
+        # Always expose profile and step outputs if they exist, regardless of overall status
+        # (so the UI can restore its partial state while a later step is processing).
+        if session.profile:
+            result['profile'] = session.profile
 
-            if session.clean_report:
-                result['clean_report'] = session.clean_report
-            if session.transform_report:
-                result['transform_report'] = session.transform_report
+        if session.clean_report:
+            result['clean_report'] = session.clean_report
+        if session.transform_report:
+            result['transform_report'] = session.transform_report
 
-            if session.training_results:
-                result['training_results'] = _serialize_training_results(session.training_results)
-            if session.recommendations:
-                result['recommendations'] = session.recommendations
+        if session.training_results:
+            result['training_results'] = _serialize_training_results(session.training_results)
+        if session.recommendations:
+            result['recommendations'] = session.recommendations
 
-            if session.explainability and 'error' not in session.explainability:
-                result['has_explainability'] = True
-            if session.diagnostics:
-                result['has_diagnostics'] = True
+        if session.explainability and 'error' not in session.explainability:
+            result['has_explainability'] = True
+        if session.diagnostics:
+            result['has_diagnostics'] = True
 
-            if session.retrain_results:
-                result['retrain_results'] = session.retrain_results
-        
+        if session.retrain_results:
+            result['retrain_results'] = session.retrain_results
         
         return result
 
