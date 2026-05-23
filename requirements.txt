@@ -24,3 +24,4 @@ umap-learn
 statsmodels
 firebase-admin
 boto3
+google-generativeai
