@@ -6365,7 +6365,7 @@ print("\\n✅ Pipeline complete!")
         if (ensureAuthenticated()) {
             initTopUserAvatar();
             restoreApiInputs();
-            restoreSession();
+            // restoreSession(); // Removed as per user request
             setPhase('prepare', null, 'overview');
         }
     </script>

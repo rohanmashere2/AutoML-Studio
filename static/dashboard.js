@@ -46,7 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initModelDriftUpload();
     initBatchPredict();
     initDatasetManager();
-    restoreSession();
+    // restoreSession(); // Removed as per user request
 
     onAuthStateChanged(auth, (user) => {
 
