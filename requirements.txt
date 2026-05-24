@@ -26,3 +26,4 @@ firebase-admin
 google-generativeai
 flask-limiter
 boto3
+cachetools
