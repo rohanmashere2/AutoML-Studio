@@ -195,6 +195,16 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
             X, y, test_size=0.25, random_state=42
         )
     
+    # Scale features AFTER split to prevent data leakage
+    from ml_engine.transformer import fit_scaler, apply_scaler
+    numeric_cols_to_scale = transform_metadata.get('numeric_cols_to_scale', [])
+    fitted_scaler = fit_scaler(X_train, numeric_cols_to_scale)
+    if fitted_scaler is not None:
+        X_train = apply_scaler(X_train, fitted_scaler, numeric_cols_to_scale)
+        X_test = apply_scaler(X_test, fitted_scaler, numeric_cols_to_scale)
+        # Store fitted scaler in transform_metadata for inference
+        transform_metadata['scaler'] = fitted_scaler
+    
     # Get models
     models = get_models(problem_type)
     

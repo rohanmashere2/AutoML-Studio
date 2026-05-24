@@ -8,7 +8,7 @@ import json
 import shutil
 import zipfile
 import io
-from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, Response
+from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, Response, g
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import pandas as pd
@@ -25,10 +25,73 @@ from ml_engine.b2_storage import (
     list_prefix
 )
 from ml_engine.unsupervised_report_generator import generate_unsupervised_html_report
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from logging_config import setup_logging
+from auth import verify_firebase_token, get_current_user_uid, _get_firebase_app
 
 app = Flask(__name__)
-CORS(app)
-app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024 * 1024  # 1GB max
+app.secret_key = os.getenv('SECRET_KEY', 'dev-change-me-in-production')
+
+# CORS — configurable origins (defaults to localhost)
+_allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:7860').split(',')
+CORS(app, origins=[o.strip() for o in _allowed_origins], supports_credentials=True)
+
+# Rate limiting
+limiter = Limiter(app=app, key_func=get_remote_address, default_limits=["200/hour"])
+
+# Max upload size — configurable via env var (default 100 MB)
+_max_upload_mb = int(os.getenv('MAX_UPLOAD_MB', '100'))
+app.config['MAX_CONTENT_LENGTH'] = _max_upload_mb * 1024 * 1024
+
+# Structured logging
+setup_logging(app)
+
+# ── Authentication: protect all /api/ routes with Firebase ID token ──
+# Routes that do NOT require authentication:
+_PUBLIC_PREFIXES = ('/health', '/login', '/static/', '/favicon')
+_PUBLIC_PATHS = {'/', '/dashboard', '/profile'}
+
+
+@app.before_request
+def _enforce_auth():
+    """Verify Firebase ID token on every /api/ request."""
+    path = request.path
+
+    # Skip auth for public routes (pages, health, static assets)
+    if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        return None
+
+    # Only enforce on API routes
+    if not path.startswith('/api/'):
+        return None
+
+    # Check if Firebase Admin SDK is available
+    if _get_firebase_app() is None:
+        # Firebase not configured — allow request with anonymous identity
+        g.user = {'uid': 'anonymous', 'email': 'anonymous@local'}
+        return None
+
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify({
+            'error': 'Authentication required',
+            'message': 'Missing or malformed Authorization header. Expected: Bearer <firebase_id_token>'
+        }), 401
+
+    id_token = auth_header[7:]
+    if not id_token:
+        return jsonify({'error': 'Authentication required', 'message': 'Empty token'}), 401
+
+    claims = verify_firebase_token(id_token)
+    if claims is None:
+        return jsonify({
+            'error': 'Invalid or expired token',
+            'message': 'Please sign in again'
+        }), 401
+
+    # Store verified user for downstream route handlers
+    g.user = claims
 
 # Custom JSON encoder for numpy types
 from flask.json.provider import DefaultJSONProvider
@@ -57,9 +120,49 @@ pipeline_manager = PipelineManager(UPLOAD_DIR, OUTPUT_DIR)
 # Supported file extensions
 ALLOWED_EXTENSIONS = {'.csv', '.tsv', '.xlsx', '.xls', '.json', '.parquet'}
 
+# Magic-byte MIME types for file content validation
+ALLOWED_MIMES = {
+    'text/csv', 'text/plain', 'text/tab-separated-values',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
+    'application/json',
+    'application/octet-stream',  # parquet files
+    'application/zip',           # xlsx is a zip
+}
+
 
 def _allowed_file(filename):
     return os.path.splitext(filename)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def _validate_file_content(file_storage):
+    """Validate uploaded file by magic bytes, not just extension."""
+    try:
+        import magic
+        header = file_storage.read(2048)
+        file_storage.seek(0)
+        mime = magic.from_buffer(header, mime=True)
+        if mime not in ALLOWED_MIMES:
+            return False, f"File content type '{mime}' is not allowed"
+        return True, None
+    except ImportError:
+        # python-magic not installed — fall back to extension-only check
+        return True, None
+    except Exception as e:
+        return True, None  # Don't block uploads on validation errors
+
+
+@app.route('/health')
+@limiter.exempt
+def health():
+    """Health check endpoint for Docker/K8s probes."""
+    db_status = 'connected'
+    try:
+        from ml_engine.experiment_store import ExperimentStore
+        ExperimentStore()
+    except Exception:
+        db_status = 'disconnected'
+    return jsonify({'status': 'ok', 'db': db_status})
 
 
 @app.route('/')
@@ -129,6 +232,7 @@ def preview_columns():
 # ==============================================================================
 
 @app.route('/api/upload', methods=['POST'])
+@limiter.limit("20/minute")
 def upload():
     """Step 1: Upload dataset (CSV/Excel/JSON/Parquet) and get profile."""
     if 'file' not in request.files:
@@ -140,6 +244,11 @@ def upload():
     
     if not _allowed_file(file.filename):
         return jsonify({'error': f'Unsupported format. Allowed: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
+    
+    # Validate file content by magic bytes
+    valid, err_msg = _validate_file_content(file)
+    if not valid:
+        return jsonify({'error': err_msg}), 400
     
     problem_statement = request.form.get('problem_statement', '')
     
@@ -314,6 +423,7 @@ def clean_transform():
 # ==============================================================================
 
 @app.route('/api/train', methods=['POST'])
+@limiter.limit("5/minute")
 def train():
     """Step 3: Train models (ML + Deep Learning)."""
     data = request.json
@@ -1053,6 +1163,7 @@ def set_api_key():
 # ==============================================================================
 
 @app.route('/api/chat', methods=['POST'])
+@limiter.limit("10/minute")
 def chat():
     try:
         data = request.get_json()

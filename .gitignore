@@ -1,15 +1,27 @@
-
+# Python
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+
+# Database
+automl_experiments.db
+
+# Environment
 .env
 venv/
-*.pkl
-.env
 
-*.db
-.pytest_cache/
+# Models & artifacts
+*.pkl
+models/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Temp
 temp_script_*.js
-test_*.py
-test_loan_data.csv
-echo "automl_experiments.db"
-echo "static/logo.png"

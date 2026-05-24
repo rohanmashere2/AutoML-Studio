@@ -1,0 +1,15 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+automl_experiments.db
+*.pkl
+models/
+.env
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+tests/
+*.spec
+.pytest_cache/

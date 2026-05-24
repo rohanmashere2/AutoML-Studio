@@ -62,7 +62,7 @@ class PipelineSession:
     """Manages the state of a single AutoML session."""
     
     def __init__(self, session_id=None):
-        self.session_id = session_id or str(uuid.uuid4())[:8]
+        self.session_id = session_id or str(uuid.uuid4())
         self.status = 'idle'
         self.progress = 0
         self.progress_message = ''
@@ -183,7 +183,8 @@ class PipelineManager:
     """Manages multiple pipeline sessions."""
     
     def __init__(self, upload_dir='uploads', output_dir='outputs'):
-        self.sessions = {}
+        from session_manager import SessionManager
+        self.sessions = SessionManager(maxsize=1000, ttl=7200)
         self.upload_dir = upload_dir
         self.output_dir = output_dir
         os.makedirs(upload_dir, exist_ok=True)
@@ -202,7 +203,7 @@ class PipelineManager:
         session = PipelineSession()
         session.output_dir = os.path.join(self.output_dir, session.session_id)
         os.makedirs(session.output_dir, exist_ok=True)
-        self.sessions[session.session_id] = session
+        self.sessions.set(session.session_id, session)
         return session
     
     def get_session(self, session_id):
@@ -405,6 +406,14 @@ class PipelineManager:
                     session.X_train, session.X_test, session.y_train, session.y_test = train_test_split(
                         X, y, test_size=0.25, random_state=42
                     )
+                
+                # Apply scaling to stored train/test data (matching what trainer.py does)
+                from ml_engine.transformer import fit_scaler, apply_scaler
+                numeric_cols_to_scale = (session.transform_metadata or {}).get('numeric_cols_to_scale', [])
+                stored_scaler = fit_scaler(session.X_train, numeric_cols_to_scale)
+                if stored_scaler is not None:
+                    session.X_train = apply_scaler(session.X_train, stored_scaler, numeric_cols_to_scale)
+                    session.X_test = apply_scaler(session.X_test, stored_scaler, numeric_cols_to_scale)
                 
                 session.feature_names = list(X.columns)
                 

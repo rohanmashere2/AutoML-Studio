@@ -84,7 +84,7 @@ def transform_dataset(df, profile):
     report['steps'].append(step)
     
     # Step 6: Scale numeric features
-    X, step, scaler = _scale_features(X)
+    X, step, numeric_cols_to_scale = _scale_features(X)
     report['steps'].append(step)
     
     # Step 7: Handle class imbalance (classification only)
@@ -117,7 +117,8 @@ def transform_dataset(df, profile):
     # Store metadata for potential retrain
     metadata = {
         'target_encoder': target_encoder,
-        'scaler': scaler,
+        'scaler': None,  # Scaler will be fitted after train/test split
+        'numeric_cols_to_scale': numeric_cols_to_scale,
         'target_column': target_col,
         'problem_type': problem_type,
         'feature_names': list(X.columns),
@@ -242,22 +243,17 @@ def _remove_high_correlation(X, threshold=0.95):
 
 
 def _scale_features(X):
-    """Scale numeric features using StandardScaler."""
+    """Identify numeric features for scaling (scaling is deferred to after train/test split)."""
     numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-    
-    scaler = None
-    if numeric_cols:
-        scaler = StandardScaler()
-        X[numeric_cols] = scaler.fit_transform(X[numeric_cols])
     
     step = {
         'name': 'Scale Features',
         'icon': '⚖️',
-        'description': f'StandardScaler applied to {len(numeric_cols)} numeric features' if numeric_cols else 'No numeric features to scale',
+        'description': f'Identified {len(numeric_cols)} numeric features for StandardScaler (applied after train/test split to prevent data leakage)' if numeric_cols else 'No numeric features to scale',
         'count': len(numeric_cols),
         'applied': len(numeric_cols) > 0,
     }
-    return X, step, scaler
+    return X, step, numeric_cols
 
 
 def _handle_imbalance(X, y):
@@ -334,3 +330,42 @@ def _handle_imbalance(X, y):
     }
     return X, y, step, round(ratio, 2)
 
+
+def fit_scaler(X_train, numeric_cols):
+    """Fit StandardScaler on training data only to prevent data leakage.
+    
+    Args:
+        X_train: Training feature DataFrame
+        numeric_cols: List of numeric column names to scale
+    
+    Returns:
+        Fitted StandardScaler instance, or None if no numeric columns
+    """
+    if not numeric_cols:
+        return None
+    cols_present = [c for c in numeric_cols if c in X_train.columns]
+    if not cols_present:
+        return None
+    scaler = StandardScaler()
+    scaler.fit(X_train[cols_present])
+    return scaler
+
+
+def apply_scaler(X, scaler, numeric_cols):
+    """Apply a pre-fitted scaler to a dataset split.
+    
+    Args:
+        X: Feature DataFrame (train or test split)
+        scaler: Fitted StandardScaler instance
+        numeric_cols: List of numeric column names that were scaled
+    
+    Returns:
+        DataFrame with scaled numeric columns
+    """
+    if scaler is None or not numeric_cols:
+        return X
+    X = X.copy()
+    cols_present = [c for c in numeric_cols if c in X.columns]
+    if cols_present:
+        X[cols_present] = scaler.transform(X[cols_present])
+    return X
