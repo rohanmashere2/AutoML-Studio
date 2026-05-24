@@ -1,3 +1,12 @@
+---
+title: AutoML Studio
+emoji: 🚀
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
+
 # AutoML Studio
 
 **End-to-end automated machine learning platform** with 80+ API endpoints covering data profiling, cleaning, transformation, model training, hyperparameter optimization, explainability, and deployment.
@@ -27,7 +36,7 @@ docker run -p 7860:7860 --env-file .env automl-studio
 
 ## Architecture
 
-```
+```text
 app.py                  # Flask application (routes, middleware, startup)
 session_manager.py      # Thread-safe TTL session store (cachetools)
 logging_config.py       # Structured JSON logging with request IDs
@@ -75,7 +84,7 @@ pytest tests/ -v
 
 ## Configuration
 
-All configuration is via environment variables. See [`.env.example`](.env.example) for the full list.
+All configuration is via environment variables. See `.env.example` for the full list.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
