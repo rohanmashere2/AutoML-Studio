@@ -522,6 +522,9 @@
             };
 
             localStorage.setItem('automl_profile_settings', JSON.stringify(settings));
+            
+            // Apply immediately
+            if (window.applyAutoMLSettings) window.applyAutoMLSettings();
 
             const hint = document.getElementById('settingsHint');
             hint.textContent = 'Settings saved successfully.';
@@ -538,6 +541,7 @@
         loadProfile();
         loadSettings();
     </script>
+    <script src="/static/settings_manager.js"></script>
 </body>
 
 </html>
