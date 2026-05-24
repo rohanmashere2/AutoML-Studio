@@ -24,3 +24,5 @@ umap-learn
 statsmodels
 firebase-admin
 google-generativeai
+flask-limiter
+boto3
