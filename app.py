@@ -4,6 +4,9 @@ REST API for the full-featured AutoML dashboard with 18 features.
 """
 
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
 import json
 import shutil
 import zipfile

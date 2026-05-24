@@ -2580,11 +2580,6 @@
                     <div class="card">
                         <div class="card-hdr"><span class="card-title">AI Assistant</span></div>
                         <div class="form-grp">
-                            <label class="form-lbl">Gemini API Key</label>
-                            <input type="password" id="apiKeyInput" class="form-inp" placeholder="AIza…"
-                                style="font-family:var(--mono)">
-                        </div>
-                        <div class="form-grp">
                             <label class="form-lbl">Model</label>
                             <select id="modelSelect" class="form-sel">
                                 <option value="gemini-2.5-flash">gemini-2.5-flash (recommended)</option>
@@ -3121,7 +3116,6 @@
             profileData: null,
             trainResults: null,
             stage: localStorage.getItem('aml_stage') || 'idle',
-            apiKey: localStorage.getItem('aml_key') || '',
             modelId: localStorage.getItem('aml_model') || 'gemini-2.5-flash',
         };
 
@@ -5568,34 +5562,10 @@ print("\\n✅ Pipeline complete!")
         // SETTINGS
         // ═══════════════════════════════════════════
         async function saveApiSettings() {
-            S.apiKey = document.getElementById('apiKeyInput').value.trim();
             S.modelId = document.getElementById('modelSelect').value;
-            localStorage.setItem('aml_key', S.apiKey);
             localStorage.setItem('aml_model', S.modelId);
             document.getElementById('ctxLLM').textContent = S.modelId;
-
-            if (!S.apiKey) {
-                toast('⚠ API key cleared — AI will use fallback mode');
-                return;
-            }
-
-            // Send to backend so the server can use it
-            try {
-                const res = await fetch('/api/set-api-key', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_key: S.apiKey })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    toast(`✅ AI assistant activated — using ${data.provider}`);
-                    document.getElementById('ctxLLM').textContent = data.provider;
-                } else {
-                    toast(`⚠ ${data.message || data.error || 'Key saved but AI init failed'}`);
-                }
-            } catch (e) {
-                toast('⚠ Key saved locally but could not reach server: ' + e.message);
-            }
+            toast('✅ AI model preference saved');
         }
 
         function normalizeModelId(modelId) {
@@ -5606,22 +5576,10 @@ print("\\n✅ Pipeline complete!")
         }
 
         function restoreApiInputs() {
-            document.getElementById('apiKeyInput').value = S.apiKey;
             S.modelId = normalizeModelId(S.modelId);
             localStorage.setItem('aml_model', S.modelId);
             document.getElementById('modelSelect').value = S.modelId;
             document.getElementById('ctxLLM').textContent = S.modelId;
-
-            // Send saved key to backend on page load so AI persists across refreshes
-            if (S.apiKey) {
-                fetch('/api/set-api-key', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_key: S.apiKey })
-                }).then(r => r.json()).then(data => {
-                    if (data.provider) document.getElementById('ctxLLM').textContent = data.provider;
-                }).catch(() => {});
-            }
         }
 
         function clearSession() {
