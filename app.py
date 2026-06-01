@@ -31,7 +31,7 @@ from ml_engine.unsupervised_report_generator import generate_unsupervised_html_r
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from logging_config import setup_logging
-from auth import verify_firebase_token, get_current_user_uid, _get_firebase_app
+from auth import verify_firebase_token, get_current_user_uid, login_required, _get_firebase_app
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-change-me-in-production')
@@ -236,6 +236,7 @@ def preview_columns():
 
 @app.route('/api/upload', methods=['POST'])
 @limiter.limit("20/minute")
+@login_required
 def upload():
     """Step 1: Upload dataset (CSV/Excel/JSON/Parquet) and get profile."""
     if 'file' not in request.files:
@@ -254,9 +255,11 @@ def upload():
         return jsonify({'error': err_msg}), 400
     
     problem_statement = request.form.get('problem_statement', '')
+    user_id = get_current_user_uid()
     
     # Create session
     session = pipeline_manager.create_session()
+    session.user_id = user_id
     
     # Save file
     filename = secure_filename(file.filename)
@@ -264,7 +267,14 @@ def upload():
     file.save(filepath)
     
     # Profile
-    result = pipeline_manager.upload_and_profile(session.session_id, filepath, problem_statement)
+    result = pipeline_manager.upload_and_profile(session.session_id, filepath, problem_statement, user_id=user_id)
+    
+    # Clean up temp upload file (already synced to B2 by pipeline)
+    try:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+    except OSError:
+        pass
     
     return jsonify(result)
 
@@ -751,8 +761,10 @@ def check_model_drift(session_id):
 # ==============================================================================
 
 @app.route('/api/experiments')
+@login_required
 def list_experiments():
     """List all experiments with optional filtering."""
+    user_id = get_current_user_uid()
     search = request.args.get('search', None)
     tag = request.args.get('tag', None)
     limit = int(request.args.get('limit', 50))
@@ -762,23 +774,26 @@ def list_experiments():
     
     result = pipeline_manager.list_experiments(
         search=search, tag=tag, limit=limit, offset=offset,
-        sort_by=sort_by, sort_order=sort_order
+        sort_by=sort_by, sort_order=sort_order, user_id=user_id
     )
     return jsonify(result)
 
 
 @app.route('/api/experiments/<exp_id>')
+@login_required
 def get_experiment(exp_id):
     """Get experiment details."""
-    result = pipeline_manager.get_experiment(exp_id)
+    user_id = get_current_user_uid()
+    result = pipeline_manager.get_experiment(exp_id, user_id=user_id)
     if not result:
-        result = pipeline_manager.experiment_store.get_experiment_by_session_id(exp_id)
+        result = pipeline_manager.experiment_store.get_experiment_by_session_id(exp_id, user_id=user_id)
     if not result:
         return jsonify({'error': 'Experiment not found'}), 404
     return jsonify(result)
 
 
 @app.route('/api/experiments/<exp_id>', methods=['PUT'])
+@login_required
 def update_experiment(exp_id):
     """Update experiment metadata (name, tags, notes)."""
     data = request.json
@@ -787,13 +802,16 @@ def update_experiment(exp_id):
 
 
 @app.route('/api/experiments/<exp_id>', methods=['DELETE'])
+@login_required
 def delete_experiment(exp_id):
     """Delete an experiment."""
-    pipeline_manager.delete_experiment(exp_id)
+    user_id = get_current_user_uid()
+    pipeline_manager.delete_experiment(exp_id, user_id=user_id)
     return jsonify({'success': True})
 
 
 @app.route('/api/experiments/compare', methods=['POST'])
+@login_required
 def compare_experiments():
     """Compare multiple experiments side by side."""
     data = request.json
@@ -809,9 +827,105 @@ def compare_experiments():
 
 
 @app.route('/api/experiments/stats')
+@login_required
 def experiment_stats():
     """Get overall experiment statistics."""
-    return jsonify(pipeline_manager.get_experiment_stats())
+    user_id = get_current_user_uid()
+    return jsonify(pipeline_manager.get_experiment_stats(user_id=user_id))
+
+
+# ==============================================================================
+# USER STATE & PREFERENCES (replaces browser localStorage)
+# ==============================================================================
+
+# In-memory fallback when Firestore is unavailable
+_user_state_cache = {}
+_user_prefs_cache = {}
+
+
+def _get_user_state_store():
+    """Get Firestore client for user state, or None for in-memory fallback."""
+    try:
+        from ml_engine.firestore_experiment_store import _get_firestore
+        return _get_firestore()
+    except Exception:
+        return None
+
+
+@app.route('/api/user/state', methods=['GET'])
+@login_required
+def get_user_state():
+    """Fetch saved UI state (session_id, active_tab, stage, etc.)."""
+    user_id = get_current_user_uid()
+    db = _get_user_state_store()
+
+    if db:
+        try:
+            doc = db.collection('users').document(user_id).collection('settings').document('state').get()
+            if doc.exists:
+                return jsonify(doc.to_dict())
+        except Exception:
+            pass
+
+    # In-memory fallback
+    return jsonify(_user_state_cache.get(user_id, {}))
+
+
+@app.route('/api/user/state', methods=['PUT'])
+@login_required
+def save_user_state():
+    """Save UI state (session_id, active_tab, file_name, stage, model_id)."""
+    user_id = get_current_user_uid()
+    data = request.get_json() or {}
+    db = _get_user_state_store()
+
+    if db:
+        try:
+            db.collection('users').document(user_id).collection('settings').document('state').set(data, merge=True)
+            return jsonify({'success': True})
+        except Exception:
+            pass
+
+    # In-memory fallback
+    _user_state_cache[user_id] = {**_user_state_cache.get(user_id, {}), **data}
+    return jsonify({'success': True})
+
+
+@app.route('/api/user/preferences', methods=['GET'])
+@login_required
+def get_user_preferences():
+    """Fetch user preferences (theme, display_name, notifications)."""
+    user_id = get_current_user_uid()
+    db = _get_user_state_store()
+
+    if db:
+        try:
+            doc = db.collection('users').document(user_id).collection('settings').document('preferences').get()
+            if doc.exists:
+                return jsonify(doc.to_dict())
+        except Exception:
+            pass
+
+    return jsonify(_user_prefs_cache.get(user_id, {}))
+
+
+@app.route('/api/user/preferences', methods=['PUT'])
+@login_required
+def save_user_preferences():
+    """Save user preferences."""
+    user_id = get_current_user_uid()
+    data = request.get_json() or {}
+    db = _get_user_state_store()
+
+    if db:
+        try:
+            db.collection('users').document(user_id).collection('settings').document('preferences').set(data, merge=True)
+            return jsonify({'success': True})
+        except Exception:
+            pass
+
+    _user_prefs_cache[user_id] = {**_user_prefs_cache.get(user_id, {}), **data}
+    return jsonify({'success': True})
 
 # ==============================================================================
 # EXECUTIVE SUMMARY
@@ -1320,38 +1434,46 @@ def switch_dataset():
 # ==============================================================================
 
 @app.route('/api/projects')
+@login_required
 def list_projects():
     """List saved projects."""
-    return jsonify(pipeline_manager.list_projects())
+    user_id = get_current_user_uid()
+    return jsonify(pipeline_manager.list_projects(user_id=user_id))
 
 
 @app.route('/api/projects/save', methods=['POST'])
+@login_required
 def save_project():
     """Save current session as a project."""
     data = request.get_json()
     session_id = data.get('session_id')
     name = data.get('name')
-    result = pipeline_manager.save_project(session_id, name)
+    user_id = get_current_user_uid()
+    result = pipeline_manager.save_project(session_id, name, user_id=user_id)
     if 'error' in result:
         return jsonify(result), 400
     return jsonify(result)
 
 
 @app.route('/api/projects/load', methods=['POST'])
+@login_required
 def load_project():
     """Load a saved project."""
     data = request.get_json()
     name = data.get('name')
-    result = pipeline_manager.load_project(name)
+    user_id = get_current_user_uid()
+    result = pipeline_manager.load_project(name, user_id=user_id)
     if 'error' in result:
         return jsonify(result), 400
     return jsonify(result)
 
 
 @app.route('/api/projects/<name>', methods=['DELETE'])
+@login_required
 def delete_project(name):
     """Delete a saved project."""
-    result = pipeline_manager.delete_project(name)
+    user_id = get_current_user_uid()
+    result = pipeline_manager.delete_project(name, user_id=user_id)
     return jsonify(result)
 
 

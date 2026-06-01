@@ -1,6 +1,7 @@
 """
-AutoML Studio - Experiment Store (v2)
-SQLite-backed experiment tracking with structured diffing, hyperparameter storage,
+AutoML Studio - Experiment Store (v3)
+Auto-selects Firestore (cloud) or SQLite (local fallback) backend.
+SQLite backend includes structured diffing, hyperparameter storage,
 feature importance tracking, and fingerprint support.
 """
 
@@ -13,19 +14,26 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-try:
-    from ml_engine.firebase_sync import get_best_score as firebase_get_best_score, save_best_score as firebase_save_best_score
-except Exception as e:
-    logger.warning(f"Firebase sync import failed: {e}")
-    firebase_get_best_score = None
-    firebase_save_best_score = None
-
 
 DB_NAME = 'automl_experiments.db'
 
 
-class ExperimentStore:
-    """SQLite-backed experiment storage with structured diff support."""
+def ExperimentStore(db_path=None):
+    """Factory: returns Firestore backend if available, else SQLite fallback."""
+    try:
+        from ml_engine.firestore_experiment_store import is_firestore_available, FirestoreExperimentStore
+        if is_firestore_available():
+            logger.info("Using Firestore experiment store (cloud)")
+            return FirestoreExperimentStore()
+    except Exception as e:
+        logger.debug(f"Firestore check failed: {e}")
+
+    logger.info("Using SQLite experiment store (local fallback)")
+    return _SQLiteExperimentStore(db_path=db_path)
+
+
+class _SQLiteExperimentStore:
+    """SQLite-backed experiment storage (local fallback)."""
 
     def __init__(self, db_path=None):
         if db_path is None:
@@ -55,7 +63,8 @@ class ExperimentStore:
                     best_score REAL,
                     primary_metric TEXT,
                     session_id TEXT,
-                    notes TEXT DEFAULT ''
+                    notes TEXT DEFAULT '',
+                    user_id TEXT DEFAULT 'anonymous'
                 );
 
                 CREATE TABLE IF NOT EXISTS experiment_results (
@@ -91,6 +100,7 @@ class ExperimentStore:
                 CREATE INDEX IF NOT EXISTS idx_exp_created ON experiments(created_at);
                 CREATE INDEX IF NOT EXISTS idx_exp_dataset ON experiments(dataset_name);
                 CREATE INDEX IF NOT EXISTS idx_exp_status ON experiments(status);
+                CREATE INDEX IF NOT EXISTS idx_exp_user ON experiments(user_id);
                 CREATE INDEX IF NOT EXISTS idx_results_exp ON experiment_results(experiment_id);
                 CREATE INDEX IF NOT EXISTS idx_models_exp ON experiment_models(experiment_id);
             ''')
@@ -100,6 +110,7 @@ class ExperimentStore:
         migrations = [
             ('experiment_models', 'hyperparameters', "TEXT DEFAULT '{}'"),
             ('experiment_models', 'feature_importance', "TEXT DEFAULT '[]'"),
+            ('experiments', 'user_id', "TEXT DEFAULT 'anonymous'"),
         ]
         with self._connect() as conn:
             for table, column, col_type in migrations:
@@ -107,6 +118,9 @@ class ExperimentStore:
                     conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {col_type}')
                 except sqlite3.OperationalError:
                     pass  # Column already exists
+
+            # Backfill existing rows that have NULL user_id
+            conn.execute("UPDATE experiments SET user_id = 'anonymous' WHERE user_id IS NULL")
 
             # Create fingerprints table if not exists
             conn.execute('''
@@ -118,6 +132,12 @@ class ExperimentStore:
                 )
             ''')
 
+            # Create index on user_id if not exists
+            try:
+                conn.execute('CREATE INDEX IF NOT EXISTS idx_exp_user ON experiments(user_id)')
+            except sqlite3.OperationalError:
+                pass
+
     def _connect(self):
         """Get a database connection."""
         conn = sqlite3.connect(self.db_path)
@@ -126,10 +146,11 @@ class ExperimentStore:
 
     def create_experiment(self, name=None, description='', dataset_name='',
                           target_column='', problem_type='', n_rows=0, n_cols=0,
-                          session_id=None, tags=None):
+                          session_id=None, tags=None, user_id=None):
         """Create a new experiment record."""
         exp_id = str(uuid.uuid4())[:12]
         now = datetime.utcnow().isoformat()
+        user_id = user_id or 'anonymous'
 
         if name is None:
             name = f'Experiment_{now[:10]}_{exp_id[:6]}'
@@ -138,11 +159,11 @@ class ExperimentStore:
             conn.execute('''
                 INSERT INTO experiments (id, name, description, tags, dataset_name,
                     target_column, problem_type, n_rows, n_cols, status,
-                    created_at, updated_at, session_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?)
+                    created_at, updated_at, session_id, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?)
             ''', (exp_id, name, description, json.dumps(tags or []),
                   dataset_name, target_column, problem_type, n_rows, n_cols,
-                  now, now, session_id))
+                  now, now, session_id, user_id))
 
         return exp_id
 
@@ -171,15 +192,6 @@ class ExperimentStore:
                 f'UPDATE experiments SET {set_clause} WHERE id = ?',
                 values
             )
-
-        if firebase_save_best_score and ('best_score' in updates or 'best_model' in updates):
-            logger.info(f"Syncing to Firebase: {exp_id} best_score={updates.get('best_score')}")
-            result = firebase_save_best_score(
-                exp_id,
-                updates.get('best_score'),
-                updates.get('best_model')
-            )
-            logger.info(f"Firebase sync result: {result}")
 
     def save_step_result(self, exp_id, step, result_data):
         """Save a pipeline step result."""
@@ -233,24 +245,23 @@ class ExperimentStore:
 
     # ── Read Operations ──────────────────────────────────────
 
-    def get_experiment(self, exp_id):
+    def get_experiment(self, exp_id, user_id=None):
         """Get a single experiment with its results."""
         with self._connect() as conn:
-            row = conn.execute(
-                'SELECT * FROM experiments WHERE id = ?', (exp_id,)
-            ).fetchone()
+            if user_id:
+                row = conn.execute(
+                    'SELECT * FROM experiments WHERE id = ? AND user_id = ?', (exp_id, user_id)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    'SELECT * FROM experiments WHERE id = ?', (exp_id,)
+                ).fetchone()
 
             if not row:
                 return None
 
             exp = dict(row)
             exp['tags'] = json.loads(exp.get('tags', '[]'))
-
-            if firebase_get_best_score:
-                firebase_score = firebase_get_best_score(exp_id)
-                exp['firebase_best_score'] = firebase_score
-                if firebase_score is not None:
-                    exp['best_score'] = firebase_score
 
             # Get step results
             results = conn.execute(
@@ -282,13 +293,19 @@ class ExperimentStore:
 
             return exp
 
-    def get_experiment_by_session_id(self, session_id):
+    def get_experiment_by_session_id(self, session_id, user_id=None):
         """Get the most recent experiment associated with a session id."""
         with self._connect() as conn:
-            row = conn.execute(
-                'SELECT * FROM experiments WHERE session_id = ? ORDER BY created_at DESC LIMIT 1',
-                (session_id,)
-            ).fetchone()
+            if user_id:
+                row = conn.execute(
+                    'SELECT * FROM experiments WHERE session_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1',
+                    (session_id, user_id)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    'SELECT * FROM experiments WHERE session_id = ? ORDER BY created_at DESC LIMIT 1',
+                    (session_id,)
+                ).fetchone()
 
         if not row:
             return None
@@ -296,19 +313,18 @@ class ExperimentStore:
         exp = dict(row)
         exp['tags'] = json.loads(exp.get('tags', '[]'))
 
-        if firebase_get_best_score:
-            firebase_score = firebase_get_best_score(exp['id'])
-            exp['firebase_best_score'] = firebase_score
-            if firebase_score is not None:
-                exp['best_score'] = firebase_score
         return exp
 
     def list_experiments(self, limit=50, offset=0, search=None, tag=None,
-                         sort_by='created_at', sort_order='desc'):
+                         sort_by='created_at', sort_order='desc', user_id=None):
         """List experiments with optional filtering."""
         query = 'SELECT * FROM experiments'
         params = []
         conditions = []
+
+        if user_id:
+            conditions.append('user_id = ?')
+            params.append(user_id)
 
         if search:
             conditions.append('(name LIKE ? OR description LIKE ? OR dataset_name LIKE ?)')
@@ -343,11 +359,6 @@ class ExperimentStore:
         for row in rows:
             exp = dict(row)
             exp['tags'] = json.loads(exp.get('tags', '[]'))
-            if firebase_get_best_score:
-                firebase_score = firebase_get_best_score(exp['id'])
-                exp['firebase_best_score'] = firebase_score
-                if firebase_score is not None:
-                    exp['best_score'] = firebase_score
             experiments.append(exp)
 
         return {
@@ -508,29 +519,47 @@ class ExperimentStore:
 
     # ── Delete & Stats ───────────────────────────────────────
 
-    def delete_experiment(self, exp_id):
+    def delete_experiment(self, exp_id, user_id=None):
         """Delete an experiment and all its data."""
         with self._connect() as conn:
+            # Verify ownership if user_id is provided
+            if user_id:
+                row = conn.execute(
+                    'SELECT id FROM experiments WHERE id = ? AND user_id = ?', (exp_id, user_id)
+                ).fetchone()
+                if not row:
+                    return False
+
             conn.execute('DELETE FROM experiment_results WHERE experiment_id = ?', (exp_id,))
             conn.execute('DELETE FROM experiment_models WHERE experiment_id = ?', (exp_id,))
             conn.execute('DELETE FROM fingerprints WHERE experiment_id = ?', (exp_id,))
             conn.execute('DELETE FROM experiments WHERE id = ?', (exp_id,))
         return True
 
-    def get_stats(self):
+    def get_stats(self, user_id=None):
         """Get overall experiment statistics."""
+        user_filter = ' WHERE user_id = ?' if user_id else ''
+        user_params = [user_id] if user_id else []
+
         with self._connect() as conn:
-            total = conn.execute('SELECT COUNT(*) as cnt FROM experiments').fetchone()['cnt']
+            total = conn.execute(
+                f'SELECT COUNT(*) as cnt FROM experiments{user_filter}', user_params
+            ).fetchone()['cnt']
             completed = conn.execute(
-                "SELECT COUNT(*) as cnt FROM experiments WHERE status = 'complete'"
+                f"SELECT COUNT(*) as cnt FROM experiments WHERE status = 'complete'" +
+                (' AND user_id = ?' if user_id else ''),
+                user_params
             ).fetchone()['cnt']
             avg_score = conn.execute(
-                'SELECT AVG(best_score) as avg FROM experiments WHERE best_score IS NOT NULL'
+                f'SELECT AVG(best_score) as avg FROM experiments WHERE best_score IS NOT NULL' +
+                (' AND user_id = ?' if user_id else ''),
+                user_params
             ).fetchone()['avg']
 
             # Problem type distribution
             types = conn.execute(
-                'SELECT problem_type, COUNT(*) as cnt FROM experiments GROUP BY problem_type'
+                f'SELECT problem_type, COUNT(*) as cnt FROM experiments{user_filter} GROUP BY problem_type',
+                user_params
             ).fetchall()
 
             return {

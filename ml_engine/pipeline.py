@@ -54,7 +54,11 @@ from ml_engine.pipeline_builder import PipelineDAG
 # New Studio imports
 from ml_engine.hyperopt_engine import auto_optimize
 from ml_engine.cleaning_advisor import generate_cleaning_suggestions, apply_suggestions
-from ml_engine.local_storage import save_project as _save_project, load_project as _load_project, list_projects as _list_projects, delete_project as _delete_project
+# Project storage: B2 cloud first, local fallback
+try:
+    from ml_engine.b2_project_storage import save_project as _save_project, load_project as _load_project, list_projects as _list_projects, delete_project as _delete_project
+except Exception:
+    from ml_engine.local_storage import save_project as _save_project, load_project as _load_project, list_projects as _list_projects, delete_project as _delete_project
 from ml_engine.b2_storage import upload_file
 
 
@@ -96,6 +100,7 @@ class PipelineSession:
         
         # New: Phase 4 - Experiments
         self.experiment_id = None
+        self.user_id = None
         
         # Train/test data (kept for explainability & deployment)
         self.X_train = None
@@ -210,7 +215,8 @@ class PipelineManager:
         return self.sessions.get(session_id)
 
     def _b2_key(self, session, suffix):
-        return f"sessions/{session.session_id}/{suffix}"
+        user_id = getattr(session, 'user_id', None) or 'anonymous'
+        return f"users/{user_id}/sessions/{session.session_id}/{suffix}"
 
     def _upload_to_b2(self, session, local_path, key_suffix):
         if not local_path or not os.path.exists(local_path):
@@ -220,12 +226,13 @@ class PipelineManager:
         except Exception:
             pass
     
-    def upload_and_profile(self, session_id, filepath, problem_statement):
+    def upload_and_profile(self, session_id, filepath, problem_statement, user_id=None):
         """Step 1: Upload file and profile the dataset."""
         session = self.get_session(session_id)
         if not session:
             return {'error': 'Session not found'}
         
+        session.user_id = user_id
         session.status = 'processing'
         session.current_step = 'upload'
         session.update_progress('Analyzing dataset...', 10)
@@ -252,6 +259,7 @@ class PipelineManager:
                 n_rows=session.profile.get('n_rows', 0),
                 n_cols=session.profile.get('n_cols', 0),
                 session_id=session_id,
+                user_id=user_id,
             )
 
             if session.experiment_id:
@@ -839,21 +847,21 @@ class PipelineManager:
         """List all experiments."""
         return self.experiment_store.list_experiments(**kwargs)
     
-    def get_experiment(self, exp_id):
+    def get_experiment(self, exp_id, user_id=None):
         """Get experiment details."""
-        return self.experiment_store.get_experiment(exp_id)
+        return self.experiment_store.get_experiment(exp_id, user_id=user_id)
     
     def compare_experiments(self, exp_ids):
         """Compare experiments."""
         return self.experiment_store.compare_experiments(exp_ids)
     
-    def delete_experiment(self, exp_id):
+    def delete_experiment(self, exp_id, user_id=None):
         """Delete an experiment."""
-        return self.experiment_store.delete_experiment(exp_id)
+        return self.experiment_store.delete_experiment(exp_id, user_id=user_id)
     
-    def get_experiment_stats(self):
+    def get_experiment_stats(self, user_id=None):
         """Get experiment statistics."""
-        return self.experiment_store.get_stats()
+        return self.experiment_store.get_stats(user_id=user_id)
     
     def update_experiment(self, exp_id, **kwargs):
         """Update experiment metadata."""
@@ -1419,21 +1427,22 @@ class PipelineManager:
     
     # ========== Local Project Storage ==========
     
-    def save_project(self, session_id, name=None):
+    def save_project(self, session_id, name=None, user_id=None):
         """Save current session as a project."""
         session = self.get_session(session_id)
         if not session:
             return {'error': 'Session not found'}
-        return _save_project(session, name)
+        return _save_project(session, name, user_id=user_id)
     
-    def load_project(self, name):
+    def load_project(self, name, user_id=None):
         """Load a saved project."""
-        result = _load_project(name)
+        result = _load_project(name, user_id=user_id)
         if 'error' in result:
             return result
         
         # Restore session
         session = self.create_session()
+        session.user_id = user_id
         meta = result.get('metadata', {})
         
         if result.get('original_data_path'):
@@ -1458,13 +1467,13 @@ class PipelineManager:
             'metadata': meta,
         }
     
-    def list_projects(self):
+    def list_projects(self, user_id=None):
         """List saved projects."""
-        return {'projects': _list_projects()}
+        return {'projects': _list_projects(user_id=user_id)}
     
-    def delete_project(self, name):
+    def delete_project(self, name, user_id=None):
         """Delete a saved project."""
-        return _delete_project(name)
+        return _delete_project(name, user_id=user_id)
     
     # ========== Model Drift Detection ==========
     

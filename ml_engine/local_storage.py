@@ -18,7 +18,7 @@ def _ensure_dir():
     os.makedirs(PROJECTS_DIR, exist_ok=True)
 
 
-def save_project(session, name=None):
+def save_project(session, name=None, user_id=None):
     """
     Serialize a PipelineSession to disk.
 
@@ -30,9 +30,11 @@ def save_project(session, name=None):
         dict with save result
     """
     _ensure_dir()
+    user_dir = os.path.join(PROJECTS_DIR, user_id or 'anonymous')
+    os.makedirs(user_dir, exist_ok=True)
     name = name or session.session_id
     safe_name = "".join(c for c in name if c.isalnum() or c in ('_', '-', ' ')).strip()
-    project_dir = os.path.join(PROJECTS_DIR, safe_name)
+    project_dir = os.path.join(user_dir, safe_name)
     os.makedirs(project_dir, exist_ok=True)
 
     metadata = {
@@ -43,6 +45,7 @@ def save_project(session, name=None):
         'current_step': session.current_step,
         'is_timeseries': session.is_timeseries,
         'experiment_id': session.experiment_id,
+        'user_id': user_id or 'anonymous',
     }
 
     # Save profile
@@ -129,7 +132,7 @@ def save_project(session, name=None):
     }
 
 
-def load_project(name):
+def load_project(name, user_id=None):
     """
     Load a project from disk and return data to restore a session.
 
@@ -137,8 +140,10 @@ def load_project(name):
         dict with project data, or {'error': ...}
     """
     _ensure_dir()
+    user_dir = os.path.join(PROJECTS_DIR, user_id or 'anonymous')
+    os.makedirs(user_dir, exist_ok=True)
     safe_name = "".join(c for c in name if c.isalnum() or c in ('_', '-', ' ')).strip()
-    project_dir = os.path.join(PROJECTS_DIR, safe_name)
+    project_dir = os.path.join(user_dir, safe_name)
 
     if not os.path.exists(project_dir):
         return {'error': f'Project "{name}" not found'}
@@ -168,7 +173,7 @@ def load_project(name):
     return result
 
 
-def list_projects():
+def list_projects(user_id=None):
     """
     List all saved projects.
 
@@ -176,10 +181,12 @@ def list_projects():
         list of project summary dicts
     """
     _ensure_dir()
+    user_dir = os.path.join(PROJECTS_DIR, user_id or 'anonymous')
+    os.makedirs(user_dir, exist_ok=True)
     projects = []
 
-    for item in sorted(os.listdir(PROJECTS_DIR)):
-        project_dir = os.path.join(PROJECTS_DIR, item)
+    for item in sorted(os.listdir(user_dir)):
+        project_dir = os.path.join(user_dir, item)
         if not os.path.isdir(project_dir):
             continue
 
@@ -219,11 +226,13 @@ def list_projects():
     return sorted(projects, key=lambda p: p.get('saved_at', ''), reverse=True)
 
 
-def delete_project(name):
+def delete_project(name, user_id=None):
     """Delete a saved project."""
     _ensure_dir()
+    user_dir = os.path.join(PROJECTS_DIR, user_id or 'anonymous')
+    os.makedirs(user_dir, exist_ok=True)
     safe_name = "".join(c for c in name if c.isalnum() or c in ('_', '-', ' ')).strip()
-    project_dir = os.path.join(PROJECTS_DIR, safe_name)
+    project_dir = os.path.join(user_dir, safe_name)
 
     if os.path.exists(project_dir):
         shutil.rmtree(project_dir)

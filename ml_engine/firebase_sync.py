@@ -60,7 +60,7 @@ def _get_db():
         return None
 
 
-def save_best_score(experiment_id: str, best_score: Optional[float], best_model: Optional[str] = None) -> bool:
+def save_best_score(experiment_id: str, best_score: Optional[float], best_model: Optional[str] = None, user_id: Optional[str] = None) -> bool:
     if not experiment_id:
         return False
 
@@ -69,21 +69,22 @@ def save_best_score(experiment_id: str, best_score: Optional[float], best_model:
         logger.debug(f"Firebase not available, skipping save for experiment {experiment_id}")
         return False
 
+    base = f"users/{user_id}/experiments/{experiment_id}" if user_id else f"experiments/{experiment_id}"
     payload: dict[str, Any] = {
         "best_score": best_score,
         "best_model": best_model,
     }
     try:
-        logger.info(f"Saving to Firebase: experiments/{experiment_id} = {payload}")
-        db.reference(f"experiments/{experiment_id}").update(payload)
-        logger.info(f"Successfully saved to Firebase: {experiment_id}")
+        logger.info(f"Saving to Firebase: {base} = {payload}")
+        db.reference(base).update(payload)
+        logger.info(f"Successfully saved to Firebase: {base}")
         return True
     except Exception as e:
-        logger.error(f"Failed to save to Firebase for {experiment_id}: {e}")
+        logger.error(f"Failed to save to Firebase for {base}: {e}")
         return False
 
 
-def get_best_score(experiment_id: str) -> Optional[float]:
+def get_best_score(experiment_id: str, user_id: Optional[str] = None) -> Optional[float]:
     if not experiment_id:
         return None
 
@@ -92,15 +93,16 @@ def get_best_score(experiment_id: str) -> Optional[float]:
         logger.debug(f"Firebase not available, skipping get for experiment {experiment_id}")
         return None
 
+    base = f"users/{user_id}/experiments/{experiment_id}" if user_id else f"experiments/{experiment_id}"
     try:
-        logger.debug(f"Fetching from Firebase: experiments/{experiment_id}")
-        data = db.reference(f"experiments/{experiment_id}").get() or {}
+        logger.debug(f"Fetching from Firebase: {base}")
+        data = db.reference(base).get() or {}
         score = data.get("best_score")
         if score is None:
-            logger.debug(f"No best_score found in Firebase for {experiment_id}")
+            logger.debug(f"No best_score found in Firebase for {base}")
             return None
-        logger.debug(f"Retrieved best_score from Firebase: {experiment_id} = {score}")
+        logger.debug(f"Retrieved best_score from Firebase: {base} = {score}")
         return float(score)
     except Exception as e:
-        logger.error(f"Failed to get from Firebase for {experiment_id}: {e}")
+        logger.error(f"Failed to get from Firebase for {base}: {e}")
         return None
