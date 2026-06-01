@@ -37,10 +37,13 @@ def _get_firebase_app():
         client_email = os.getenv('FIREBASE_CLIENT_EMAIL')
 
         if project_id and private_key and client_email:
+            # Make parsing robust against Windows CMD quotes and literal newlines
+            clean_key = private_key.strip().strip('"').strip("'").replace('\\n', '\n')
+            
             cred = credentials.Certificate({
                 "type": "service_account",
-                "project_id": project_id,
-                "private_key": private_key.replace('\\n', '\n'),
+                "project_id": project_id.strip().strip('"').strip("'"),
+                "private_key": clean_key,
                 "client_email": client_email,
                 "token_uri": "https://oauth2.googleapis.com/token",
             })
