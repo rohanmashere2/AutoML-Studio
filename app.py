@@ -231,6 +231,24 @@ def preview_columns():
 
 
 # ==============================================================================
+# AUTH: CURRENT USER IDENTITY
+# ==============================================================================
+
+@app.route('/api/me')
+@login_required
+def get_me():
+    """Return the current authenticated user's identity (uid, email).
+    Frontend uses this to verify session validity without trusting localStorage.
+    """
+    user = getattr(g, 'user', {})
+    return jsonify({
+        'uid': user.get('uid'),
+        'email': user.get('email', ''),
+        'name': user.get('name', ''),
+    })
+
+
+# ==============================================================================
 # STEP 1: UPLOAD & PROFILE
 # ==============================================================================
 
@@ -298,16 +316,18 @@ def decision(session_id):
 
 
 @app.route('/api/download/<session_id>/<file_type>')
+@login_required
 def api_download(session_id, file_type):
     from flask import request
     filename = request.args.get('filename')
+    user_id = get_current_user_uid()
     session = pipeline_manager.get_session(session_id)
     exp = None
 
     if session and getattr(session, 'experiment_id', None):
-        exp = pipeline_manager.experiment_store.get_experiment(session.experiment_id)
+        exp = pipeline_manager.experiment_store.get_experiment(session.experiment_id, user_id=user_id)
     if not exp:
-        exp = pipeline_manager.experiment_store.get_experiment(session_id)
+        exp = pipeline_manager.experiment_store.get_experiment(session_id, user_id=user_id)
 
     if not filename and file_type == 'csv':
         if session and getattr(session, 'upload_path', None):
@@ -315,43 +335,53 @@ def api_download(session_id, file_type):
         elif exp:
             filename = exp.get('dataset_name')
 
+    # Build candidate keys — user-scoped paths first, then legacy paths for backward compat
     candidate_keys = []
+    user_prefix = f"users/{user_id}/sessions/{session_id}" if user_id else None
+    legacy_prefix = f"sessions/{session_id}"
+
     if file_type == 'csv':
         if filename:
-            candidate_keys.append(f"sessions/{session_id}/uploads/{filename}")
-            candidate_keys.append(f"sessions/{session_id}/uploads/{session_id}_{filename}")
-        try:
-            uploads_session = list_prefix(f"sessions/{session_id}/uploads/")
-            if uploads_session:
-                candidate_keys.extend(uploads_session)
-        except Exception:
-            pass
+            if user_prefix:
+                candidate_keys.append(f"{user_prefix}/uploads/{filename}")
+                candidate_keys.append(f"{user_prefix}/uploads/{session_id}_{filename}")
+            candidate_keys.append(f"{legacy_prefix}/uploads/{filename}")
+            candidate_keys.append(f"{legacy_prefix}/uploads/{session_id}_{filename}")
+        # Also scan the uploads folder
+        for prefix in [p for p in [user_prefix, legacy_prefix] if p]:
+            try:
+                found = list_prefix(f"{prefix}/uploads/")
+                if found:
+                    candidate_keys.extend(found)
+            except Exception:
+                pass
     elif file_type == 'transformed':
-        candidate_keys.append(f"sessions/{session_id}/data/transformed_data.csv")
+        if user_prefix:
+            candidate_keys.append(f"{user_prefix}/data/transformed_data.csv")
+        candidate_keys.append(f"{legacy_prefix}/data/transformed_data.csv")
     elif file_type == 'model':
-        candidate_keys.append(f"sessions/{session_id}/models/best_model.pkl")
+        if user_prefix:
+            candidate_keys.append(f"{user_prefix}/models/best_model.pkl")
+        candidate_keys.append(f"{legacy_prefix}/models/best_model.pkl")
     elif file_type == 'report':
-        candidate_keys.append(f"sessions/{session_id}/reports/automl_report.html")
+        if user_prefix:
+            candidate_keys.append(f"{user_prefix}/reports/automl_report.html")
+        candidate_keys.append(f"{legacy_prefix}/reports/automl_report.html")
 
     key = next((candidate for candidate in candidate_keys if key_exists(candidate)), None)
 
     if not key:
-
         return jsonify({
             "error": "File not found in Cloud Storage"
         }), 400
 
     try:
-
         url = generate_download_url(key)
-
         return jsonify({
             "success": True,
             "url": url
         })
-
     except Exception as e:
-
         return jsonify({
             "error": str(e)
         }), 500

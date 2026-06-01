@@ -3119,17 +3119,43 @@
             modelId: localStorage.getItem('aml_model') || 'gemini-2.5-flash',
         };
 
-        function ensureAuthenticated() {
+        // Verify identity via real Firebase token — not just localStorage
+        async function ensureAuthenticated() {
             try {
-                const user = JSON.parse(localStorage.getItem('automl_user') || '{}');
-                if (user && (user.uid || user.email)) {
-                    return true;
+                const token = await window.automlGetIdToken();
+                if (!token) {
+                    window.location.replace('/login');
+                    return false;
                 }
+                // Call /api/me to confirm server accepts the token
+                const res = await fetch('/api/me');
+                if (!res.ok) {
+                    window.location.replace('/login');
+                    return false;
+                }
+                const me = await res.json();
+                // Detect account switch: clear all stale state
+                const prevUid = localStorage.getItem('automl_active_uid');
+                if (prevUid && prevUid !== me.uid) {
+                    // Different account — wipe session state
+                    ['aml_sid', 'aml_file', 'aml_stage', 'aml_model',
+                     'automl_session_id', 'automl_activity',
+                     'automl_models_count', 'automl_best_score',
+                     'automl_dataset_count', 'automl_last_run',
+                     'automl_dashboard_state'
+                    ].forEach(k => localStorage.removeItem(k));
+                    window.S = { sessionId: null, fileName: null, profileData: null,
+                                 trainResults: null, stage: 'idle',
+                                 modelId: localStorage.getItem('aml_model') || 'gemini-2.5-flash' };
+                }
+                localStorage.setItem('automl_active_uid', me.uid);
+                // Keep automl_user in sync with real server identity
+                localStorage.setItem('automl_user', JSON.stringify({ uid: me.uid, email: me.email, name: me.name }));
+                return true;
             } catch (e) {
-                // Ignore storage parsing issues.
+                window.location.replace('/login');
+                return false;
             }
-            window.location.replace('/login');
-            return false;
         }
 
         let charts = {};
@@ -5046,16 +5072,14 @@
         // ═══════════════════════════════════════════
         async function loadExperiments() {
             try {
-                let exps = [];
-                if (window.loadExperimentsFromFirebase) {
-                    exps = await window.loadExperimentsFromFirebase();
+                // Always use server-side API (enforces per-user isolation via @login_required)
+                const res = await fetch('/api/experiments');
+                if (!res.ok) {
+                    console.error('Failed to load experiments:', res.status);
+                    return;
                 }
-
-                if (!exps || !exps.length) {
-                    const res = await fetch('/api/experiments');
-                    const data = await res.json();
-                    exps = data.experiments || data || [];
-                }
+                const data = await res.json();
+                let exps = data.experiments || data || [];
 
                 const container = document.getElementById('experimentHistory');
                 if (!container) return;
@@ -6319,13 +6343,14 @@ print("\\n✅ Pipeline complete!")
             topicContainer.innerHTML = topicHtml;
         }
 
-        // INIT
-        if (ensureAuthenticated()) {
+        // INIT — ensureAuthenticated is now async; it verifies Firebase token
+        ensureAuthenticated().then(ok => {
+            if (!ok) return;
             initTopUserAvatar();
             restoreApiInputs();
             // restoreSession(); // Removed as per user request
             setPhase('prepare', null, 'overview');
-        }
+        });
     </script>
     <script src="/static/intelligence.js"></script>
     <script src="/static/intelligence2.js"></script>

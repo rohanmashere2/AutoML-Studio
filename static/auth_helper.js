@@ -92,7 +92,7 @@
     window.automlGetIdToken = getIdToken;
 
     /**
-     * Clear cached token on sign-out.
+     * Clear cached token on sign-out OR when the active user changes.
      */
     window.addEventListener('storage', (e) => {
         if (e.key === 'automl_user' && !e.newValue) {
@@ -100,6 +100,26 @@
             _tokenExpiry = 0;
         }
     });
+
+    // Also flush when Firebase auth state changes (account switch)
+    (async () => {
+        try {
+            const { getAuth } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js');
+            const auth = getAuth();
+            let _lastUid = null;
+            auth.onAuthStateChanged((user) => {
+                const uid = user ? user.uid : null;
+                if (_lastUid !== null && _lastUid !== uid) {
+                    // User switched — flush token cache immediately
+                    _cachedToken = null;
+                    _tokenExpiry = 0;
+                }
+                _lastUid = uid;
+            });
+        } catch (e) {
+            // Firebase not loaded yet — ok
+        }
+    })();
 
     console.debug('[auth] Fetch interceptor installed — /api/ requests will include Firebase ID token');
 })();
