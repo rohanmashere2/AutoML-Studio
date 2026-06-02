@@ -38,7 +38,14 @@ def _get_firebase_app():
 
         if project_id and private_key and client_email:
             # Make parsing robust against Windows CMD quotes and literal newlines
-            clean_key = private_key.strip().strip('"').strip("'").replace('\\n', '\n')
+            clean_key = (
+    private_key
+    .strip()
+    .strip('"')
+    .strip("'")
+    .replace('\\\\n', '\n')  # double escaped \\n → real newline
+    .replace('\\n', '\n')    # single escaped \n → real newline
+)
             
             cred = credentials.Certificate({
                 "type": "service_account",
