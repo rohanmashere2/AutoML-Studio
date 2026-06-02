@@ -3121,18 +3121,67 @@
 
         // Verify identity via real Firebase token — not just localStorage
         async function ensureAuthenticated() {
+            // Safety valve: prevent infinite redirect loops
+            const redirectCount = parseInt(sessionStorage.getItem('auth_redirect_count') || '0');
+            if (redirectCount > 2) {
+                sessionStorage.removeItem('auth_redirect_count');
+                console.warn('[auth] Too many redirects — showing login prompt instead of looping');
+                document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0f0f23;color:#fff;font-family:sans-serif;flex-direction:column;gap:16px"><h2>Session Expired</h2><p>Please sign in again.</p><a href="/login" style="padding:10px 24px;background:#6366f1;color:#fff;border-radius:8px;text-decoration:none">Go to Login</a></div>';
+                return false;
+            }
+
             try {
-                const token = await window.automlGetIdToken();
+                // Wait for Firebase Auth SDK to fully initialize
+                let token = null;
+                try {
+                    const { getAuth } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js');
+                    const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
+                    // Ensure Firebase is initialized (module script may not have run yet)
+                    if (!getApps().length) {
+                        initializeApp({
+                            apiKey: "AIzaSyDETbRDWS5URvXV-9f8aOJRa3xfncG5pzY",
+                            authDomain: "auto-ml-d0830.firebaseapp.com",
+                            projectId: "auto-ml-d0830",
+                        });
+                    }
+                    const auth = getAuth();
+                    // Wait for auth state to be resolved (not just currentUser snapshot)
+                    const user = await new Promise((resolve) => {
+                        const unsub = auth.onAuthStateChanged((u) => {
+                            unsub();
+                            resolve(u);
+                        });
+                        // Timeout after 5s (HF Spaces can be slow)
+                        setTimeout(() => resolve(null), 5000);
+                    });
+                    if (user) {
+                        token = await user.getIdToken();
+                    }
+                } catch (e) {
+                    console.debug('[auth] Firebase init error:', e);
+                }
+
                 if (!token) {
+                    // Clear stale localStorage to break any redirect loop
+                    localStorage.removeItem('automl_user');
+                    localStorage.removeItem('automl_active_uid');
+                    sessionStorage.setItem('auth_redirect_count', String(redirectCount + 1));
                     window.location.replace('/login');
                     return false;
                 }
+
                 // Call /api/me to confirm server accepts the token
                 const res = await fetch('/api/me');
                 if (!res.ok) {
+                    localStorage.removeItem('automl_user');
+                    localStorage.removeItem('automl_active_uid');
+                    sessionStorage.setItem('auth_redirect_count', String(redirectCount + 1));
                     window.location.replace('/login');
                     return false;
                 }
+                // Auth succeeded — reset redirect counter
+                sessionStorage.removeItem('auth_redirect_count');
+
                 const me = await res.json();
                 // Detect account switch: clear all stale state
                 const prevUid = localStorage.getItem('automl_active_uid');
@@ -3153,6 +3202,8 @@
                 localStorage.setItem('automl_user', JSON.stringify({ uid: me.uid, email: me.email, name: me.name }));
                 return true;
             } catch (e) {
+                localStorage.removeItem('automl_user');
+                sessionStorage.setItem('auth_redirect_count', String(redirectCount + 1));
                 window.location.replace('/login');
                 return false;
             }

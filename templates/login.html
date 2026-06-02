@@ -767,14 +767,16 @@
 
 <body>
     <script>
-        (function redirectIfLoggedIn() {
-            try {
-                const user = JSON.parse(localStorage.getItem('automl_user') || '{}');
-                if (user && (user.uid || user.email)) {
-                    window.location.replace('/dashboard');
-                }
-            } catch (e) {
-                // Ignore storage parsing issues.
+        // Quick check: if we've been redirecting too many times, just stay on login
+        // The real auth check happens after Firebase initializes below
+        (function() {
+            const count = parseInt(sessionStorage.getItem('auth_redirect_count') || '0');
+            if (count > 0) {
+                // Dashboard sent us here because auth failed — clear stale data & stay
+                localStorage.removeItem('automl_user');
+                localStorage.removeItem('automl_active_uid');
+                sessionStorage.removeItem('auth_redirect_count');
+                return;
             }
         })();
     </script>
