@@ -17,7 +17,7 @@
 
         :root {
             --sw: 230px;
-            --hdr: 52px;
+            --hdr: 60px;
             --accent: #6366F1;
             --accent2: #06B6D4;
             --success: #10B981;
@@ -40,7 +40,7 @@
             font-family: var(--font);
             background: var(--bg2);
             color: var(--txt);
-            font-size: 13px;
+            font-size: 14px;
             line-height: 1.5;
             height: 100vh;
             overflow: hidden
@@ -48,7 +48,7 @@
 
         .layout {
             display: grid;
-            grid-template-columns: 72px 1fr;
+            grid-template-columns: 84px 1fr;
             grid-template-rows: var(--hdr) 1fr;
             height: 100vh;
             background: var(--bg0)
@@ -62,16 +62,16 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 12px 0;
-            gap: 6px;
+            padding: 14px 0;
+            gap: 8px;
             flex-shrink: 0;
             border-right: 1px solid rgba(255, 255, 255, 0.08);
             z-index: 10;
         }
 
         .rail-btn {
-            width: 58px;
-            height: 56px;
+            width: 68px;
+            height: 62px;
             border-radius: 8px;
             display: flex;
             flex-direction: column;
@@ -98,12 +98,12 @@
         }
 
         .rail-btn i {
-            font-size: 20px;
+            font-size: 24px;
             line-height: 1;
         }
 
         .rail-btn span {
-            font-size: 10px;
+            font-size: 11px;
             font-weight: 600;
             line-height: 1;
             white-space: nowrap;
@@ -151,7 +151,7 @@
 
         /* HORIZONTAL TAB BAR */
         .tabbar {
-            height: 40px;
+            height: 44px;
             background: var(--bg0);
             border-bottom: 1px solid var(--bdr);
             display: flex;
@@ -169,12 +169,12 @@
         }
 
         .tab {
-            height: 40px;
+            height: 44px;
             padding: 0 16px;
             display: flex;
             align-items: center;
             gap: 6px;
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 600;
             color: var(--txt2);
             cursor: pointer;
@@ -185,7 +185,7 @@
         }
 
         .tab i {
-            font-size: 14px;
+            font-size: 16px;
         }
 
         .tab:hover {
@@ -244,25 +244,25 @@
         }
 
         .logo-icon {
-            width: 28px;
-            height: 28px;
+            width: 36px;
+            height: 36px;
             background: var(--accent);
             border-radius: 6px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: #fff;
-            font-size: 15px;
+            font-size: 18px;
             font-weight: 800
         }
 
         .logo-txt {
-            font-size: 14px;
+            font-size: 17px;
             font-weight: 700
         }
 
         .logo-ver {
-            font-size: 10px;
+            font-size: 11px;
             color: var(--txt2);
             background: var(--bg1);
             padding: 2px 7px;
@@ -278,7 +278,7 @@
         }
 
         .badge {
-            font-size: 10px;
+            font-size: 11px;
             font-weight: 600;
             padding: 3px 9px;
             border-radius: 10px;
@@ -314,13 +314,13 @@
         .btn {
             display: inline-flex;
             align-items: center;
-            gap: 5px;
-            padding: 6px 12px;
+            gap: 6px;
+            padding: 8px 14px;
             border-radius: var(--r4);
             border: 1px solid var(--bdr2);
             background: var(--bg0);
             cursor: pointer;
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 600;
             font-family: var(--font);
             color: var(--txt2);
@@ -3111,11 +3111,11 @@
         // STATE
         // ═══════════════════════════════════════════
         window.S = {
-            sessionId: localStorage.getItem('aml_sid') || null,
-            fileName: localStorage.getItem('aml_file') || null,
+            sessionId: sessionStorage.getItem('aml_sid') || null,
+            fileName: sessionStorage.getItem('aml_file') || null,
             profileData: null,
             trainResults: null,
-            stage: localStorage.getItem('aml_stage') || 'idle',
+            stage: sessionStorage.getItem('aml_stage') || 'idle',
             modelId: localStorage.getItem('aml_model') || 'gemini-2.5-flash',
         };
 
@@ -3187,8 +3187,10 @@
                 const prevUid = localStorage.getItem('automl_active_uid');
                 if (prevUid && prevUid !== me.uid) {
                     // Different account — wipe session state
-                    ['aml_sid', 'aml_file', 'aml_stage', 'aml_model',
-                     'automl_session_id', 'automl_activity',
+                    // Pipeline state is in sessionStorage
+                    ['aml_sid', 'aml_file', 'aml_stage'].forEach(k => sessionStorage.removeItem(k));
+                    // Other state remains in localStorage
+                    ['automl_session_id', 'automl_activity',
                      'automl_models_count', 'automl_best_score',
                      'automl_dataset_count', 'automl_last_run',
                      'automl_dashboard_state'
@@ -3559,11 +3561,13 @@
         function handleSessionLost(message = 'Session expired. Please upload and run again.') {
             S.sessionId = null;
             S.stage = 'idle';
-            localStorage.removeItem('aml_sid');
-            localStorage.removeItem('aml_stage');
+            sessionStorage.removeItem('aml_sid');
+            sessionStorage.removeItem('aml_stage');
+            sessionStorage.removeItem('aml_file');
             setProgress(0, '⚠ ' + message);
             document.getElementById('pipelineStatus').textContent = 'Idle';
             toast('⚠ ' + message);
+            setPhase('prepare', null, 'overview');
             openModal();
         }
 
@@ -3612,7 +3616,7 @@
             S.fileName = pendingFile.name.replace(/\.[^/.]+$/, '');
             S.problemStatement = problem;
             S.targetColumn = target;
-            localStorage.setItem('aml_file', S.fileName);
+            sessionStorage.setItem('aml_file', S.fileName);
 
             // Show UI
             closeModal();
@@ -3645,7 +3649,7 @@
 
                 S.sessionId = upData.session_id;
                 S.profileData = upData.profile || upData;
-                localStorage.setItem('aml_sid', S.sessionId);
+                sessionStorage.setItem('aml_sid', S.sessionId);
                 setStep('upload', 'done');
                 setProgress(15, '✅ Upload complete — ' + (upData.n_rows || '?') + ' rows');
                 toast('✅ Upload complete');
@@ -3753,7 +3757,7 @@
                 loadRecommendations();
 
                 S.stage = 'done';
-                localStorage.setItem('aml_stage', 'done');
+                sessionStorage.setItem('aml_stage', 'done');
                 document.getElementById('pipelineStatus').textContent = '5/7 Complete';
                 document.getElementById('nb-pipeline').style.display = '';
                 document.getElementById('nb-deploy').style.display = '';
@@ -5764,7 +5768,7 @@ print("\\n✅ Pipeline complete!")
                     const fname = data.upload_path.split(/[\\/]/).pop().replace(/\.[^/.]+$/, '');
                     if (fname) {
                         S.fileName = fname;
-                        localStorage.setItem('aml_file', fname);
+                        sessionStorage.setItem('aml_file', fname);
                     }
                 }
 
@@ -6180,9 +6184,9 @@ print("\\n✅ Pipeline complete!")
                     S.profileData = upData.profile || null;
                     S.fileName = unsupPendingFile.name.replace(/\.[^/.]+$/, '');
                     S.stage = 'unsupervised';
-                    localStorage.setItem('aml_sid', S.sessionId);
-                    localStorage.setItem('aml_file', S.fileName);
-                    localStorage.setItem('aml_stage', S.stage);
+                    sessionStorage.setItem('aml_sid', S.sessionId);
+                    sessionStorage.setItem('aml_file', S.fileName);
+                    sessionStorage.setItem('aml_stage', S.stage);
                     if (typeof updateTopbar === 'function') updateTopbar();
                     if (S.profileData) populateProfile(S.profileData);
                     clearUnsupervisedFile();
@@ -6395,12 +6399,17 @@ print("\\n✅ Pipeline complete!")
         }
 
         // INIT — ensureAuthenticated is now async; it verifies Firebase token
-        ensureAuthenticated().then(ok => {
+        ensureAuthenticated().then(async (ok) => {
             if (!ok) return;
             initTopUserAvatar();
             restoreApiInputs();
-            // restoreSession(); // Removed as per user request
-            setPhase('prepare', null, 'overview');
+            // Restore active pipeline if returning from another page (e.g. /profile)
+            // sessionStorage keeps state within the same tab but clears on tab close
+            if (S.sessionId) {
+                await restoreSession();
+            } else {
+                setPhase('prepare', null, 'overview');
+            }
         });
     </script>
     <script src="/static/intelligence.js"></script>
