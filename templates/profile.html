@@ -312,7 +312,7 @@
                 AutoML <span>Studio</span>
             </span>
         </div>
-        <button class="btn" onclick="window.location.href='/dashboard'">Back to Dashboard</button>
+        <button class="btn" onclick="sessionStorage.setItem('aml_nav_away','1'); window.location.href='/dashboard'">Back to Dashboard</button>
     </div>
 
     <main class="page">
@@ -534,7 +534,10 @@
         }
 
         function logout() {
+            // Clear pipeline session state so login starts fresh
+            ['aml_sid', 'aml_file', 'aml_stage', 'aml_problem', 'aml_target'].forEach(k => sessionStorage.removeItem(k));
             localStorage.removeItem('automl_user');
+            localStorage.removeItem('automl_active_uid');
             window.location.href = '/login';
         }
 

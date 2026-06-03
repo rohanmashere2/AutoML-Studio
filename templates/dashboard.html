@@ -5795,6 +5795,8 @@ print("\\n✅ Pipeline complete!")
         }
 
         function openProfilePage() {
+            // Mark that we're navigating away intentionally (not a refresh)
+            sessionStorage.setItem('aml_nav_away', '1');
             window.location.href = '/profile';
         }
 
@@ -6455,11 +6457,17 @@ print("\\n✅ Pipeline complete!")
             if (!ok) return;
             initTopUserAvatar();
             restoreApiInputs();
-            // Restore active pipeline if returning from another page (e.g. /profile)
-            // sessionStorage keeps state within the same tab but clears on tab close
-            if (S.sessionId) {
+            // Only restore session if returning from profile (nav flag set).
+            // On refresh or fresh load, start clean.
+            const navAway = sessionStorage.getItem('aml_nav_away');
+            sessionStorage.removeItem('aml_nav_away');
+            if (navAway && S.sessionId) {
                 await restoreSession();
             } else {
+                // Clear stale pipeline state on refresh
+                ['aml_sid', 'aml_file', 'aml_stage', 'aml_problem', 'aml_target'].forEach(k => sessionStorage.removeItem(k));
+                S.sessionId = null; S.fileName = null; S.stage = 'idle';
+                S.problemStatement = null; S.targetColumn = null;
                 setPhase('prepare', null, 'overview');
             }
         });

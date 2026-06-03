@@ -770,6 +770,10 @@
         // Quick check: if we've been redirecting too many times, just stay on login
         // The real auth check happens after Firebase initializes below
         (function() {
+            // Always clear pipeline session state when arriving at login page
+            // This ensures logout → login starts fresh (only profile nav should restore)
+            ['aml_sid', 'aml_file', 'aml_stage', 'aml_problem', 'aml_target'].forEach(k => sessionStorage.removeItem(k));
+
             const count = parseInt(sessionStorage.getItem('auth_redirect_count') || '0');
             if (count > 0) {
                 // Dashboard sent us here because auth failed — clear stale data & stay
