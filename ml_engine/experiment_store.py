@@ -64,7 +64,8 @@ class _SQLiteExperimentStore:
                     primary_metric TEXT,
                     session_id TEXT,
                     notes TEXT DEFAULT '',
-                    user_id TEXT DEFAULT 'anonymous'
+                    user_id TEXT DEFAULT 'anonymous',
+                    problem_statement TEXT DEFAULT ''
                 );
 
                 CREATE TABLE IF NOT EXISTS experiment_results (
@@ -111,6 +112,7 @@ class _SQLiteExperimentStore:
             ('experiment_models', 'hyperparameters', "TEXT DEFAULT '{}'"),
             ('experiment_models', 'feature_importance', "TEXT DEFAULT '[]'"),
             ('experiments', 'user_id', "TEXT DEFAULT 'anonymous'"),
+            ('experiments', 'problem_statement', "TEXT DEFAULT ''"),
         ]
         with self._connect() as conn:
             for table, column, col_type in migrations:
@@ -146,7 +148,7 @@ class _SQLiteExperimentStore:
 
     def create_experiment(self, name=None, description='', dataset_name='',
                           target_column='', problem_type='', n_rows=0, n_cols=0,
-                          session_id=None, tags=None, user_id=None):
+                          session_id=None, tags=None, user_id=None, problem_statement=''):
         """Create a new experiment record."""
         exp_id = str(uuid.uuid4())[:12]
         now = datetime.utcnow().isoformat()
@@ -159,11 +161,11 @@ class _SQLiteExperimentStore:
             conn.execute('''
                 INSERT INTO experiments (id, name, description, tags, dataset_name,
                     target_column, problem_type, n_rows, n_cols, status,
-                    created_at, updated_at, session_id, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?)
+                    created_at, updated_at, session_id, user_id, problem_statement)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?)
             ''', (exp_id, name, description, json.dumps(tags or []),
                   dataset_name, target_column, problem_type, n_rows, n_cols,
-                  now, now, session_id, user_id))
+                  now, now, session_id, user_id, problem_statement or ''))
 
         return exp_id
 
@@ -172,7 +174,7 @@ class _SQLiteExperimentStore:
         allowed_fields = {
             'name', 'description', 'tags', 'status', 'best_model',
             'best_score', 'primary_metric', 'notes', 'target_column',
-            'problem_type',
+            'problem_type', 'problem_statement',
         }
 
         updates = {k: v for k, v in kwargs.items() if k in allowed_fields}

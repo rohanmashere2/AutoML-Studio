@@ -260,6 +260,7 @@ class PipelineManager:
                 n_cols=session.profile.get('n_cols', 0),
                 session_id=session_id,
                 user_id=user_id,
+                problem_statement=problem_statement or '',
             )
 
             if session.experiment_id:

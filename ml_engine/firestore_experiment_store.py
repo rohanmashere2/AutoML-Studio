@@ -75,7 +75,7 @@ class FirestoreExperimentStore:
 
     def create_experiment(self, name=None, description='', dataset_name='',
                           target_column='', problem_type='', n_rows=0, n_cols=0,
-                          session_id=None, tags=None, user_id=None):
+                          session_id=None, tags=None, user_id=None, problem_statement=''):
         """Create a new experiment record in Firestore."""
         exp_id = str(uuid.uuid4())[:12]
         now = datetime.utcnow().isoformat()
@@ -103,6 +103,7 @@ class FirestoreExperimentStore:
             'session_id': session_id,
             'notes': '',
             'user_id': user_id,
+            'problem_statement': problem_statement or '',
         }
 
         self._exp_ref(user_id, exp_id).set(doc)
@@ -113,7 +114,7 @@ class FirestoreExperimentStore:
         allowed_fields = {
             'name', 'description', 'tags', 'status', 'best_model',
             'best_score', 'primary_metric', 'notes', 'target_column',
-            'problem_type',
+            'problem_type', 'problem_statement',
         }
         updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
         if not updates:

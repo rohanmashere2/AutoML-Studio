@@ -5149,6 +5149,12 @@
                     const sid = exp.session_id || exp.experiment_id || exp.id || '—';
                     const score = exp.firebase_best_score ?? exp.best_score ?? exp.accuracy ?? exp.primary_metric ?? 0;
                     const model = exp.best_model || exp.model || '—';
+                    const datasetName = exp.dataset_name || exp.file_name || '—';
+                    const problemStmt = exp.problem_statement || '';
+                    const problemType = exp.problem_type || '—';
+                    const targetCol = exp.target_column || '—';
+                    const nRows = exp.n_rows || '—';
+                    const nCols = exp.n_cols || '—';
                     const unsupervisedSummary = exp.unsupervised_summary || (exp.step_results || []).find(r => r.step === 'unsupervised')?.data?.summary || null;
                     const isUnsupervised = exp.analysis_type === 'unsupervised' || !!unsupervisedSummary;
                     let dt = '—';
@@ -5158,36 +5164,66 @@
                         dt = new Date(exp.created_at).toLocaleString();
                     }
 
-                    const downloadLinks = `
-                        <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
-                            <button class="btn" style="padding: 4px 8px; font-size: 11px;" onclick="downloadB2File('${sid}', 'csv', '${exp.dataset_name || exp.file_name || ''}', event)">⬇ Dataset</button>
-                            <button class="btn" style="padding: 4px 8px; font-size: 11px;" onclick="downloadB2File('${sid}', 'transformed', '', event)">⬇ Transformed</button>
-                            <button class="btn" style="padding: 4px 8px; font-size: 11px;" onclick="downloadB2File('${sid}', 'model', '', event)">⬇ Model (.pkl)</button>
-                            <button class="btn" style="padding: 4px 8px; font-size: 11px;" onclick="downloadB2File('${sid}', 'report', '', event)">⬇ Report</button>
-                        </div>
-                    `;
+                    // Problem type badge color
+                    const ptColors = { classification: '#6366F1', regression: '#06B6D4', clustering: '#10B981', 'time-series': '#F59E0B' };
+                    const ptColor = ptColors[problemType.toLowerCase()] || '#64748B';
 
                     const unsupMeta = isUnsupervised ? `
-                                                <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--txt2);">
-                                                        <span>🔮 Unsupervised</span>
-                                                        ${unsupervisedSummary?.clustering?.best_algorithm ? `<span>Best: ${unsupervisedSummary.clustering.best_algorithm}</span>` : ''}
-                                                        ${unsupervisedSummary?.clustering?.best_silhouette !== undefined && unsupervisedSummary?.clustering?.best_silhouette !== null ? `<span>Silhouette: ${Number(unsupervisedSummary.clustering.best_silhouette).toFixed(3)}</span>` : ''}
-                                                </div>
-                                        ` : '';
+                        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--txt2);">
+                            <span>🔮 Unsupervised</span>
+                            ${unsupervisedSummary?.clustering?.best_algorithm ? `<span>Best: ${unsupervisedSummary.clustering.best_algorithm}</span>` : ''}
+                            ${unsupervisedSummary?.clustering?.best_silhouette !== undefined && unsupervisedSummary?.clustering?.best_silhouette !== null ? `<span>Silhouette: ${Number(unsupervisedSummary.clustering.best_silhouette).toFixed(3)}</span>` : ''}
+                        </div>
+                    ` : '';
 
-                    html += `<div class="exp-card" style="padding:15px; background:var(--bg1); border:1px solid var(--bdr); border-radius:8px; margin-bottom:10px; cursor:pointer;" onclick="selectExp(this,'${sid}')">
-        <div class="exp-hdr" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span class="exp-name" style="font-weight:700; font-size:14px; color:var(--txt);">${exp.file_name || exp.experiment_id || exp.id || '—'}</span>
-                    <div style="display:flex;gap:5px"><span class="tag tg" style="background:var(--accent); color:#fff; padding:2px 6px; border-radius:4px; font-size:11px;">${model}</span>${isUnsupervised ? '<span class="tag tg" style="background:var(--green); color:#fff; padding:2px 6px; border-radius:4px; font-size:11px;">Unsupervised</span>' : ''}</div>
+                    html += `<div class="exp-card" style="padding:18px; background:var(--bg1); border:1px solid var(--bdr); border-radius:10px; margin-bottom:12px; cursor:pointer; transition:all .15s;" onclick="selectExp(this,'${sid}')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--bdr)'">
+        <!-- Header: Dataset name + badges -->
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
+            <div>
+                <div style="font-weight:700; font-size:16px; color:var(--txt); margin-bottom:4px;">📊 ${datasetName}</div>
+                ${problemStmt ? `<div style="font-size:13px; color:var(--txt2); line-height:1.4; max-width:500px; margin-bottom:4px;">💬 ${problemStmt}</div>` : ''}
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">
+                <span style="background:${ptColor}; color:#fff; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; text-transform:capitalize;">${problemType}</span>
+                ${isUnsupervised ? '<span style="background:#10B981; color:#fff; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600;">Unsupervised</span>' : ''}
+            </div>
         </div>
-        <div class="exp-meta" style="font-size:12px; color:var(--txt2); display:flex; gap:15px;">
-            <span>📅 ${dt}</span>
-            <span>🎯 Score: ${(score * 100).toFixed(1)}%</span>
-            ${exp.firebase_best_score !== undefined && exp.firebase_best_score !== null ? `<span>☁ Firebase: ${(exp.firebase_best_score * 100).toFixed(1)}%</span>` : ''}
-            <span>📂 ${exp.problem_type || '—'}</span>
+
+        <!-- Key info grid -->
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px; margin-bottom:10px; font-size:13px;">
+            <div style="background:var(--bg2); padding:8px 12px; border-radius:6px;">
+                <div style="color:var(--txt2); font-size:11px; margin-bottom:2px;">Target Column</div>
+                <div style="font-weight:600; color:var(--txt);">🎯 ${targetCol}</div>
+            </div>
+            <div style="background:var(--bg2); padding:8px 12px; border-radius:6px;">
+                <div style="color:var(--txt2); font-size:11px; margin-bottom:2px;">Best Model</div>
+                <div style="font-weight:600; color:var(--accent);">🤖 ${model}</div>
+            </div>
+            <div style="background:var(--bg2); padding:8px 12px; border-radius:6px;">
+                <div style="color:var(--txt2); font-size:11px; margin-bottom:2px;">Score</div>
+                <div style="font-weight:600; color:var(--success);">📈 ${(score * 100).toFixed(1)}%</div>
+            </div>
+            <div style="background:var(--bg2); padding:8px 12px; border-radius:6px;">
+                <div style="color:var(--txt2); font-size:11px; margin-bottom:2px;">Dataset Size</div>
+                <div style="font-weight:600; color:var(--txt);">📋 ${nRows} × ${nCols}</div>
+            </div>
         </div>
-                ${unsupMeta}
-        ${downloadLinks}
+
+        <!-- Date row -->
+        <div style="font-size:12px; color:var(--txt2); margin-bottom:8px;">
+            📅 ${dt}
+            ${exp.firebase_best_score !== undefined && exp.firebase_best_score !== null ? ` · ☁ Firebase: ${(exp.firebase_best_score * 100).toFixed(1)}%` : ''}
+        </div>
+
+        ${unsupMeta}
+
+        <!-- Downloads -->
+        <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--bdr); display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn" style="padding:5px 12px; font-size:12px;" onclick="downloadB2File('${sid}', 'csv', '${datasetName}', event)">⬇ Dataset</button>
+            <button class="btn" style="padding:5px 12px; font-size:12px;" onclick="downloadB2File('${sid}', 'transformed', '', event)">⬇ Transformed</button>
+            <button class="btn" style="padding:5px 12px; font-size:12px;" onclick="downloadB2File('${sid}', 'model', '', event)">⬇ Model (.pkl)</button>
+            <button class="btn" style="padding:5px 12px; font-size:12px;" onclick="downloadB2File('${sid}', 'report', '', event)">⬇ Report</button>
+        </div>
       </div>`;
                 });
                 container.innerHTML = html;
