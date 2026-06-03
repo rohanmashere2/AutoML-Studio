@@ -3113,6 +3113,8 @@
         window.S = {
             sessionId: sessionStorage.getItem('aml_sid') || null,
             fileName: sessionStorage.getItem('aml_file') || null,
+            problemStatement: sessionStorage.getItem('aml_problem') || null,
+            targetColumn: sessionStorage.getItem('aml_target') || null,
             profileData: null,
             trainResults: null,
             stage: sessionStorage.getItem('aml_stage') || 'idle',
@@ -3188,7 +3190,7 @@
                 if (prevUid && prevUid !== me.uid) {
                     // Different account — wipe session state
                     // Pipeline state is in sessionStorage
-                    ['aml_sid', 'aml_file', 'aml_stage'].forEach(k => sessionStorage.removeItem(k));
+                    ['aml_sid', 'aml_file', 'aml_stage', 'aml_problem', 'aml_target'].forEach(k => sessionStorage.removeItem(k));
                     // Other state remains in localStorage
                     ['automl_session_id', 'automl_activity',
                      'automl_models_count', 'automl_best_score',
@@ -3564,6 +3566,8 @@
             sessionStorage.removeItem('aml_sid');
             sessionStorage.removeItem('aml_stage');
             sessionStorage.removeItem('aml_file');
+            sessionStorage.removeItem('aml_problem');
+            sessionStorage.removeItem('aml_target');
             setProgress(0, '⚠ ' + message);
             document.getElementById('pipelineStatus').textContent = 'Idle';
             toast('⚠ ' + message);
@@ -3617,6 +3621,8 @@
             S.problemStatement = problem;
             S.targetColumn = target;
             sessionStorage.setItem('aml_file', S.fileName);
+            sessionStorage.setItem('aml_problem', problem);
+            sessionStorage.setItem('aml_target', target);
 
             // Show UI
             closeModal();
@@ -4155,6 +4161,10 @@
             document.getElementById('apiEndpoint').textContent = `POST http://localhost:5000/api/predict/${S.sessionId}`;
             document.getElementById('codeContent').textContent = genPythonCode(results);
             populateDeployInfo(results);
+
+            // Drift Monitor — show the upload form now that a model is trained
+            document.getElementById('driftEmpty').style.display = 'none';
+            document.getElementById('driftContent').style.display = 'block';
 
             // Chat context
             document.getElementById('ctxModel').textContent = best.model || best.model_name || '—';
@@ -5810,6 +5820,12 @@ print("\\n✅ Pipeline complete!")
 
                 S.profileData = data.profile || data;
                 S.trainResults = data.training_results || data.results || null;
+
+                // Restore problem statement from API if not in sessionStorage
+                if (!S.problemStatement && data.problem_statement) {
+                    S.problemStatement = data.problem_statement;
+                    sessionStorage.setItem('aml_problem', data.problem_statement);
+                }
 
                 if (S.profileData) populateProfile(S.profileData);
                 if (data.clean_report || data.transform_report) populatePipelineReports(data);

@@ -101,6 +101,7 @@ class PipelineSession:
         # New: Phase 4 - Experiments
         self.experiment_id = None
         self.user_id = None
+        self.problem_statement = None
         
         # Train/test data (kept for explainability & deployment)
         self.X_train = None
@@ -181,6 +182,7 @@ class PipelineSession:
             'is_timeseries': self.is_timeseries,
             'experiment_id': self.experiment_id,
             'upload_path': self.upload_path,
+            'problem_statement': self.problem_statement,
         }
 
 
@@ -245,6 +247,7 @@ class PipelineManager:
             # Profile (includes TS detection, NLP detection, multi-format)
             session.update_progress('Detecting target column and problem type...', 50)
             session.profile = profile_dataset(filepath, problem_statement)
+            session.problem_statement = problem_statement or ''
             
             # Check if time series
             session.is_timeseries = session.profile.get('is_timeseries', False)
