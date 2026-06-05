@@ -152,42 +152,96 @@ def _handle_missing_values(df, profile):
 
 
 def _handle_outliers(df, target_col=None):
-    """Detect and cap outliers using IQR method for numeric columns."""
+    """Detect and handle outliers using smart strategies per column.
+    
+    Improvements over naive IQR:
+    - Skips ID-like columns (monotonic, high cardinality)
+    - Skips columns with <2% outliers (they're fine)
+    - Uses Winsorization (1st/99th percentile) for skewed distributions
+    - Uses IQR capping for normally distributed features
+    """
     capped_cols = []
     outlier_counts = {}
+    strategies_used = {}
     
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     
-    # Don't cap outliers in the target column
+    # Don't handle outliers in the target column
     if target_col and target_col in numeric_cols:
         numeric_cols.remove(target_col)
     
+    n_rows = len(df)
+    
     for col in numeric_cols:
+        # Skip ID-like columns (monotonically increasing, very high cardinality)
+        if df[col].nunique() > 0.9 * n_rows and n_rows > 50:
+            continue
+        # Skip if column is monotonically increasing/decreasing (likely an index)
+        if df[col].is_monotonic_increasing or df[col].is_monotonic_decreasing:
+            continue
+        # Skip binary/low-cardinality columns
+        if df[col].nunique() <= 5:
+            continue
+        
         Q1 = df[col].quantile(0.25)
         Q3 = df[col].quantile(0.75)
         IQR = Q3 - Q1
         
         if IQR == 0:
             continue
-            
-        lower = Q1 - 1.5 * IQR
-        upper = Q3 + 1.5 * IQR
         
-        n_outliers = int(((df[col] < lower) | (df[col] > upper)).sum())
+        lower_iqr = Q1 - 1.5 * IQR
+        upper_iqr = Q3 + 1.5 * IQR
         
-        if n_outliers > 0:
+        n_outliers = int(((df[col] < lower_iqr) | (df[col] > upper_iqr)).sum())
+        outlier_pct = n_outliers / max(n_rows, 1)
+        
+        # Skip columns with very few outliers (<2%)
+        if outlier_pct < 0.02:
+            continue
+        
+        # Choose strategy based on distribution skewness
+        skewness = abs(df[col].skew())
+        
+        if skewness > 2:
+            # Highly skewed: use Winsorization (1st/99th percentile) — gentler
+            lower = df[col].quantile(0.01)
+            upper = df[col].quantile(0.99)
             df[col] = df[col].clip(lower=lower, upper=upper)
-            capped_cols.append(col)
-            outlier_counts[col] = n_outliers
+            n_capped = n_outliers  # approximate
+            strategies_used[col] = 'winsorize_1_99'
+        else:
+            # Normal-ish: use IQR capping
+            df[col] = df[col].clip(lower=lower_iqr, upper=upper_iqr)
+            n_capped = n_outliers
+            strategies_used[col] = 'iqr_cap'
+        
+        capped_cols.append(col)
+        outlier_counts[col] = n_capped
     
     total_outliers = sum(outlier_counts.values())
+    
+    # Build description
+    if capped_cols:
+        winsorized = [c for c, s in strategies_used.items() if s == 'winsorize_1_99']
+        iqr_capped = [c for c, s in strategies_used.items() if s == 'iqr_cap']
+        desc_parts = []
+        if iqr_capped:
+            desc_parts.append(f'IQR-capped {len(iqr_capped)} columns')
+        if winsorized:
+            desc_parts.append(f'Winsorized {len(winsorized)} skewed columns')
+        description = f'Handled {total_outliers} outliers: {", ".join(desc_parts)}'
+    else:
+        description = 'No significant outliers found (skipped ID-like and low-outlier columns)'
     
     step = {
         'name': 'Handle Outliers',
         'icon': '📊',
-        'description': f'Capped {total_outliers} outliers in {len(capped_cols)} columns (IQR method)' if capped_cols else 'No significant outliers found',
+        'description': description,
         'count': total_outliers,
         'outlier_counts': outlier_counts,
+        'strategies': strategies_used,
         'applied': len(capped_cols) > 0,
     }
     return df, step
+

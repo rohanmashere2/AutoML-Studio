@@ -3575,13 +3575,17 @@
             openModal();
         }
 
-        async function pollStatus(expectedStep, maxWait = 300000) {
+        async function pollStatus(expectedStep, maxWait = 3600000) {
             const start = Date.now();
+            let lastServerResponse = Date.now();
+            const SERVER_DEAD_TIMEOUT = 120000; // 2 min without any server response = dead
             return new Promise((resolve, reject) => {
                 const iv = setInterval(async () => {
                     try {
                         const r = await fetch(`/api/status/${S.sessionId}`);
                         const d = await r.json();
+                        lastServerResponse = Date.now(); // server is alive
+
                         if (d.error === 'Session not found') {
                             clearInterval(iv);
                             handleSessionLost('Session not found on server (likely restart).');
@@ -3590,14 +3594,36 @@
                         }
                         if (d.error) { clearInterval(iv); reject(new Error(d.error)); return; }
                         if (d.status === 'error') { clearInterval(iv); reject(new Error(d.progress_message || 'Error')); return; }
-                        if (d.progress_message) setProgress(d.progress || 0, d.progress_message);
+
+                        // Show progress with elapsed time
+                        const elapsed = Math.round((Date.now() - start) / 1000);
+                        const mins = Math.floor(elapsed / 60);
+                        const secs = elapsed % 60;
+                        const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+                        if (d.progress_message) {
+                            setProgress(d.progress || 0, `${d.progress_message} (${timeStr})`);
+                        }
+
                         if (d.status === 'complete' && d.current_step === expectedStep) { clearInterval(iv); resolve(d); return; }
+
+                        // As long as server is processing, keep waiting — no hard timeout
+                        if (d.status === 'processing' || d.status === 'started') {
+                            return; // server is alive and working, keep polling
+                        }
+
+                        // Only timeout if server is idle/stuck and maxWait exceeded
                         if (Date.now() - start > maxWait) {
                             clearInterval(iv);
                             reject(new Error('Timeout waiting for ' + expectedStep + '. Training may still be running on the server.'));
                         }
-                    } catch { /* ignore */ }
-                }, 1200);
+                    } catch {
+                        // Network error — check if server has been unresponsive too long
+                        if (Date.now() - lastServerResponse > SERVER_DEAD_TIMEOUT) {
+                            clearInterval(iv);
+                            reject(new Error('Server is not responding. The pipeline may have crashed.'));
+                        }
+                    }
+                }, 2000);
             });
         }
 
@@ -3694,7 +3720,7 @@
                 const cleanInit = await cleanRes.json();
                 if (cleanInit.error) throw new Error(cleanInit.error);
 
-                const cleanData = await pollStatus('train', 300000);
+                const cleanData = await pollStatus('train', 1800000);
                 setStep('clean', 'done');
                 setStep('transform', 'done');
                 setProgress(38, '✅ Clean & transform done');
@@ -3713,12 +3739,11 @@
 
                 let trainData;
                 try {
-                    // Model training can legitimately take several minutes.
-                    trainData = await pollStatus('results', 900000);
+                    trainData = await pollStatus('results', 3600000);
                 } catch (e) {
                     if ((e.message || '').toLowerCase().includes('timeout')) {
                         setProgress(65, '⏳ Training is taking longer than expected. Continuing to wait...');
-                        trainData = await pollStatus('results', 900000);
+                        trainData = await pollStatus('results', 3600000);
                     } else {
                         throw e;
                     }
@@ -5897,7 +5922,7 @@ print("\\n✅ Pipeline complete!")
                 if (d.current_step === 'upload' || d.current_step === 'clean' || d.current_step === 'transform') {
                     setStep('clean', 'active');
                     toast('Reconnecting to active data cleaning task...');
-                    d = await pollStatus('train', 300000);
+                    d = await pollStatus('train', 1800000);
                     populatePipelineReports(d);
                 }
 
@@ -5919,11 +5944,11 @@ print("\\n✅ Pipeline complete!")
                     
                     let trainData;
                     try {
-                        trainData = await pollStatus('results', 900000);
+                        trainData = await pollStatus('results', 3600000);
                     } catch (e) {
                         if ((e.message || '').toLowerCase().includes('timeout')) {
                             setProgress(65, '⏳ Training is taking longer than expected...');
-                            trainData = await pollStatus('results', 900000);
+                            trainData = await pollStatus('results', 3600000);
                         } else throw e;
                     }
                     

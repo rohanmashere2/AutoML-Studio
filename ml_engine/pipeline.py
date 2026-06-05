@@ -19,6 +19,11 @@ import pandas as pd
 from ml_engine.profiler import profile_dataset, read_dataset
 from ml_engine.cleaner import clean_dataset
 from ml_engine.transformer import transform_dataset
+try:
+    from ml_engine.feature_engineer import auto_engineer_features
+    HAS_FEATURE_ENGINEER = True
+except ImportError:
+    HAS_FEATURE_ENGINEER = False
 from ml_engine.trainer import train_models
 from ml_engine.recommender import generate_recommendations
 from ml_engine.retrainer import retrain_with_recommendations
@@ -325,7 +330,22 @@ class PipelineManager:
                         # Drop datetime column for training
                         session.cleaned_df = session.cleaned_df.drop(columns=[dt_col], errors='ignore')
                 
-                session.update_progress('Transforming features...', 50)
+                session.update_progress('Transforming features...', 40)
+
+                # Feature Engineering (new step between clean and transform)
+                if HAS_FEATURE_ENGINEER:
+                    try:
+                        session.update_progress('Engineering new features...', 45)
+                        target_col = session.profile.get('target_column')
+                        session.cleaned_df, fe_report = auto_engineer_features(
+                            session.cleaned_df, session.profile, target_col=target_col
+                        )
+                        # Store report for UI
+                        session.feature_engineering_report = fe_report
+                    except Exception:
+                        pass  # Feature engineering is optional, don't fail pipeline
+
+                session.update_progress('Encoding and scaling...', 55)
                 
                 # Transform (includes NLP text processing)
                 session.transformed_df, session.transform_report, session.transform_metadata = transform_dataset(

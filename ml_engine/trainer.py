@@ -3,6 +3,7 @@ AutoML Problem Solver - Model Trainer
 Trains multiple ML models, cross-validates, tunes hyperparameters, and returns a leaderboard.
 """
 
+import logging
 import pandas as pd
 import numpy as np
 import joblib
@@ -10,7 +11,9 @@ import os
 import warnings
 warnings.filterwarnings('ignore')
 
-from sklearn.model_selection import train_test_split, cross_val_score
+logger = logging.getLogger(__name__)
+
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold, KFold
 
 try:
     import optuna
@@ -164,6 +167,25 @@ def get_models(problem_type, class_weight_balanced=False):
     return models
 
 
+def _validate_training_data(X, y, problem_type):
+    """Validate data before training. Returns list of error strings."""
+    errors = []
+    if X.empty or X.shape[1] == 0:
+        errors.append("No features available for training after preprocessing.")
+    if y is None or len(y) == 0:
+        errors.append("Target column is empty.")
+    elif y.nunique() == 1:
+        errors.append(f"Target has only 1 unique value ({y.iloc[0]}). Cannot train.")
+    if len(X) < 10:
+        errors.append(f"Only {len(X)} samples. Need at least 10 for training.")
+    if X.isnull().any().any():
+        # Auto-fix: fill remaining NaN with 0
+        X.fillna(0, inplace=True)
+    if problem_type == 'classification' and y.nunique() > 0.5 * len(y) and y.nunique() > 50:
+        errors.append(f"Target has {y.nunique()} unique values out of {len(y)} rows. This looks like regression, not classification.")
+    return errors
+
+
 def train_models(df, profile, transform_metadata, output_dir, progress_callback=None):
     """
     Train all models, cross-validate, tune top models, and return results.
@@ -178,11 +200,23 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
     X = df.drop(columns=[target_col])
     y = df[target_col]
     
-    # Ensure all features are numeric
+    # Fallback-encode any remaining non-numeric columns instead of dropping
+    remaining_cats = X.select_dtypes(include=['object', 'category']).columns.tolist()
+    if remaining_cats:
+        logger.warning(f"Fallback-encoding {len(remaining_cats)} remaining non-numeric columns: {remaining_cats}")
+        for col in remaining_cats:
+            X[col] = X[col].astype('category').cat.codes
+
+    # Now ensure all numeric (should be after encoding)
     X = X.select_dtypes(include=[np.number])
     
     if X.empty:
         return {'error': 'No numeric features available for training.'}
+    
+    # Pre-training validation
+    validation_errors = _validate_training_data(X, y, problem_type)
+    if validation_errors:
+        return {'error': '; '.join(validation_errors)}
     
     # Train/test split
     stratify = y if problem_type == 'classification' else None
@@ -215,13 +249,43 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
     
     total_models = len(models)
     
+    # Smart CV strategy
+    n_samples = len(X_train)
+    if n_samples < 100:
+        n_folds = min(10, n_samples)
+    elif n_samples > 50000:
+        n_folds = 3
+    else:
+        n_folds = 5
+
+    if problem_type == 'classification':
+        cv_strategy = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    else:
+        cv_strategy = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+    
     for idx, (name, model) in enumerate(models.items()):
         if progress_callback:
             progress_callback(f'Training {name}...', int((idx / total_models) * 100))
         
         try:
-            # Train
-            model.fit(X_train, y_train)
+            # Use early stopping for boosting models
+            if name in ('XGBoost', 'LightGBM'):
+                try:
+                    model.fit(X_train, y_train,
+                              eval_set=[(X_test, y_test)],
+                              verbose=False)
+                except TypeError:
+                    model.fit(X_train, y_train)
+            elif name == 'CatBoost':
+                try:
+                    model.fit(X_train, y_train,
+                              eval_set=(X_test, y_test),
+                              early_stopping_rounds=20,
+                              verbose=False)
+                except TypeError:
+                    model.fit(X_train, y_train)
+            else:
+                model.fit(X_train, y_train)
             trained_models[name] = model
             
             # Predict
@@ -230,7 +294,7 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
             
             # Cross-validation
             scoring = 'accuracy' if problem_type == 'classification' else 'r2'
-            cv_scores = cross_val_score(model, X_train, y_train, cv=5, scoring=scoring)
+            cv_scores = cross_val_score(model, X_train, y_train, cv=cv_strategy, scoring=scoring)
             cv_results[name] = {
                 'mean': round(float(cv_scores.mean()), 4),
                 'std': round(float(cv_scores.std()), 4),
@@ -277,6 +341,14 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
                     'cv_mean': cv_results[name]['mean'],
                     'cv_std': cv_results[name]['std'],
                 }
+                # Additional regression metrics
+                metrics['mape'] = round(float(np.mean(np.abs((y_test - y_test_pred) / np.where(y_test == 0, 1, y_test))) * 100), 2)
+                metrics['max_error'] = round(float(np.max(np.abs(y_test - y_test_pred))), 4)
+                n = len(y_test)
+                p = X_test.shape[1]
+                r2_val = metrics['r2']
+                metrics['adjusted_r2'] = round(float(1 - (1 - r2_val) * (n - 1) / max(n - p - 1, 1)), 4)
+                metrics['explained_variance'] = round(float(1 - np.var(y_test - y_test_pred) / max(np.var(y_test), 1e-10)), 4)
                 primary_metric = metrics['r2']
             
             leaderboard.append({
@@ -345,6 +417,48 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
                 pass
     
     # Re-sort after tuning
+    leaderboard.sort(key=lambda x: x['primary_metric'], reverse=True)
+    for i, entry in enumerate(leaderboard):
+        entry['rank'] = i + 1
+    
+    # Build stacking ensemble from top models
+    try:
+        top_model_names = [e['model'] for e in leaderboard[:3] if e['primary_metric'] > -999 and e['model'] in trained_models]
+        if len(top_model_names) >= 2:
+            from sklearn.ensemble import StackingClassifier, StackingRegressor
+            estimators = [(name, trained_models[name]) for name in top_model_names]
+            if problem_type == 'classification':
+                stack = StackingClassifier(estimators=estimators, final_estimator=LogisticRegression(max_iter=1000), cv=3, n_jobs=-1, passthrough=False)
+            else:
+                stack = StackingRegressor(estimators=estimators, final_estimator=Ridge(), cv=3, n_jobs=-1, passthrough=False)
+            stack.fit(X_train, y_train)
+            y_stack_pred = stack.predict(X_test)
+            if problem_type == 'classification':
+                stack_score = round(float(accuracy_score(y_test, y_stack_pred)), 4)
+                stack_metrics = {
+                    'accuracy': stack_score,
+                    'precision': round(float(precision_score(y_test, y_stack_pred, average='weighted', zero_division=0)), 4),
+                    'recall': round(float(recall_score(y_test, y_stack_pred, average='weighted', zero_division=0)), 4),
+                    'f1': round(float(f1_score(y_test, y_stack_pred, average='weighted', zero_division=0)), 4),
+                }
+            else:
+                stack_score = round(float(r2_score(y_test, y_stack_pred)), 4)
+                stack_metrics = {
+                    'r2': stack_score,
+                    'mae': round(float(mean_absolute_error(y_test, y_stack_pred)), 4),
+                    'rmse': round(float(np.sqrt(mean_squared_error(y_test, y_stack_pred))), 4),
+                }
+            leaderboard.append({
+                'rank': 0,
+                'model': 'Stacked Ensemble',
+                'primary_metric': stack_score,
+                'metrics': stack_metrics,
+            })
+            trained_models['Stacked Ensemble'] = stack
+    except Exception as e:
+        pass  # Ensemble is optional, don't fail
+    
+    # Final re-sort after ensemble addition
     leaderboard.sort(key=lambda x: x['primary_metric'], reverse=True)
     for i, entry in enumerate(leaderboard):
         entry['rank'] = i + 1

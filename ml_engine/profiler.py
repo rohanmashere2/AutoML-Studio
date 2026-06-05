@@ -220,6 +220,8 @@ def _detect_problem_type(df, target_col, problem_statement):
     if target_col and target_col in df.columns:
         target = df[target_col]
         n_unique = target.nunique()
+        n_rows = len(df)
+        unique_ratio = n_unique / n_rows if n_rows > 0 else 0
         
         # Multi-label detection: check for pipe/comma-separated values
         if target.dtype == 'object':
@@ -232,16 +234,34 @@ def _detect_problem_type(df, target_col, problem_statement):
         if target.dtype == 'object':
             return 'classification'
         
-        # If target has very few unique values -> classification
-        if n_unique <= 20 and n_unique / len(df) < 0.05:
+        # If target is boolean -> classification
+        if target.dtype == 'bool' or set(target.dropna().unique()).issubset({0, 1, True, False}):
             return 'classification'
         
-        # If target is float with many unique values -> regression
-        if target.dtype == 'float64' and n_unique > 20:
+        # If target is float -> almost always regression
+        # (only classify if very few unique values like 0.0/1.0)
+        if target.dtype == 'float64':
+            if n_unique <= 2:
+                return 'classification'
             return 'regression'
         
-        # If target is int with many unique values -> regression
-        if n_unique > 20:
+        # Integer target: use stricter thresholds
+        # Binary (0/1, 1/2, etc.) -> classification
+        if n_unique <= 2:
+            return 'classification'
+        
+        # Very few unique integers (≤10) with low ratio -> likely categorical labels
+        if n_unique <= 10 and unique_ratio < 0.02:
+            return 'classification'
+        
+        # Many unique integers -> regression (scores, prices, counts, etc.)
+        if n_unique > 10:
+            return 'regression'
+        
+        # Moderate unique integers (3-10) — check the range
+        # If values span a large range, it's regression (e.g. scores 1-100)
+        val_range = target.max() - target.min()
+        if val_range > 20:
             return 'regression'
         
         return 'classification'
