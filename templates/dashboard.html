@@ -3136,6 +3136,16 @@
         // ═══════════════════════════════════════════
         // STATE
         // ═══════════════════════════════════════════
+        // Clear session state on browser refresh (F5) so user gets a fresh start
+        // Only preserve state during SPA-like navigation within the same page
+        (function() {
+            const navEntries = performance.getEntriesByType('navigation');
+            const isReload = navEntries.length > 0 ? navEntries[0].type === 'reload' : (performance.navigation && performance.navigation.type === 1);
+            if (isReload) {
+                ['aml_sid', 'aml_file', 'aml_stage', 'aml_problem', 'aml_target'].forEach(k => sessionStorage.removeItem(k));
+            }
+        })();
+
         window.S = {
             sessionId: sessionStorage.getItem('aml_sid') || null,
             fileName: sessionStorage.getItem('aml_file') || null,
@@ -4300,8 +4310,8 @@
                     col1 = mets.mape != null ? mets.mape.toFixed(1) + '%' : '—';
                     col2 = mets.adjusted_r2 != null ? mets.adjusted_r2.toFixed(3) : '—';
                 } else {
-                    col1 = mets.f1 ? (mets.f1 * 100).toFixed(1) + '%' : '—';
-                    col2 = mets.roc_auc ? mets.roc_auc.toFixed(3) : '—';
+                    col1 = mets.f1 != null ? (mets.f1 * 100).toFixed(1) + '%' : '—';
+                    col2 = mets.roc_auc != null ? mets.roc_auc.toFixed(3) : '—';
                 }
                 const cvMean = mets.cv_mean != null ? (mets.cv_mean * 100).toFixed(1) + '%' : '—';
                 const isTop = i === 0;

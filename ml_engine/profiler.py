@@ -245,20 +245,20 @@ def _detect_problem_type(df, target_col, problem_statement):
                 return 'classification'
             return 'regression'
         
-        # Integer target: use stricter thresholds
+        # Integer target: use smart thresholds
         # Binary (0/1, 1/2, etc.) -> classification
         if n_unique <= 2:
             return 'classification'
         
-        # Very few unique integers (≤10) with low ratio -> likely categorical labels
-        if n_unique <= 10 and unique_ratio < 0.02:
+        # Very few unique integers (≤20) with low ratio -> likely categorical labels
+        if n_unique <= 20 and unique_ratio < 0.05:
             return 'classification'
         
-        # Many unique integers -> regression (scores, prices, counts, etc.)
-        if n_unique > 10:
+        # Many unique integers (>20) -> regression (scores, prices, counts, etc.)
+        if n_unique > 20:
             return 'regression'
         
-        # Moderate unique integers (3-10) — check the range
+        # Moderate unique integers (3-20) — check the range
         # If values span a large range, it's regression (e.g. scores 1-100)
         val_range = target.max() - target.min()
         if val_range > 20:
