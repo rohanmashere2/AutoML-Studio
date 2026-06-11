@@ -533,11 +533,31 @@
             }, 2400);
         }
 
-        function logout() {
+        async function logout() {
             // Clear pipeline session state so login starts fresh
             ['aml_sid', 'aml_file', 'aml_stage', 'aml_problem', 'aml_target'].forEach(k => sessionStorage.removeItem(k));
             localStorage.removeItem('automl_user');
             localStorage.removeItem('automl_active_uid');
+            
+            // Sign out from Firebase Auth so the login page doesn't auto-redirect
+            try {
+                const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+                const { getAuth, signOut } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+                const firebaseConfig = {
+                    apiKey: "AIzaSyDETbRDWS5URvXV-9f8aOJRa3xfncG5pzY",
+                    authDomain: "auto-ml-d0830.firebaseapp.com",
+                    projectId: "auto-ml-d0830",
+                    storageBucket: "auto-ml-d0830.firebasestorage.app",
+                    messagingSenderId: "877592957378",
+                    appId: "1:877592957378:web:bc4579fb85131ce156065b"
+                };
+                const app = initializeApp(firebaseConfig);
+                const auth = getAuth(app);
+                await signOut(auth);
+            } catch(e) {
+                console.warn('Firebase signOut failed:', e);
+            }
+            
             window.location.href = '/login';
         }
 

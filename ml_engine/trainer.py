@@ -142,7 +142,7 @@ def get_models(problem_type, class_weight_balanced=False):
             models['SVM'] = SVC(probability=True, random_state=42, max_iter=5000, class_weight='balanced')
         
         if HAS_XGB:
-            models['XGBoost'] = XGBClassifier(n_estimators=100, random_state=42, use_label_encoder=False, eval_metric='logloss', verbosity=0)
+            models['XGBoost'] = XGBClassifier(n_estimators=100, random_state=42, eval_metric='logloss', verbosity=0)
         if HAS_CATBOOST:
             models['CatBoost'] = CatBoostClassifier(iterations=100, random_state=42, verbose=0)
         if HAS_LGBM:
@@ -271,18 +271,24 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
             # Use early stopping for boosting models
             if name in ('XGBoost', 'LightGBM'):
                 try:
+                    model.set_params(early_stopping_rounds=20)
                     model.fit(X_train, y_train,
                               eval_set=[(X_test, y_test)],
                               verbose=False)
-                except TypeError:
-                    model.fit(X_train, y_train)
+                except (TypeError, Exception):
+                    # Fallback: train without early stopping
+                    try:
+                        model = get_models(problem_type).get(name)  # get fresh model
+                        model.fit(X_train, y_train)
+                    except Exception:
+                        model.fit(X_train, y_train)
             elif name == 'CatBoost':
                 try:
                     model.fit(X_train, y_train,
                               eval_set=(X_test, y_test),
                               early_stopping_rounds=20,
                               verbose=False)
-                except TypeError:
+                except (TypeError, Exception):
                     model.fit(X_train, y_train)
             else:
                 model.fit(X_train, y_train)
@@ -358,11 +364,13 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
                 'metrics': metrics,
             })
         except Exception as e:
+            logger.warning(f"Model {name} failed: {e}")
             leaderboard.append({
                 'rank': 0,
                 'model': name,
                 'primary_metric': -999,
                 'metrics': {'error': str(e)},
+                'failed': True,
             })
     
     # Sort leaderboard

@@ -782,6 +782,21 @@
                 sessionStorage.removeItem('auth_redirect_count');
                 return;
             }
+
+            // FAST pre-check: if localStorage still has a user, likely still logged in.
+            // Hide the page content and let Firebase confirm. This avoids flash of login form.
+            const storedUser = localStorage.getItem('automl_user');
+            if (storedUser) {
+                try {
+                    const u = JSON.parse(storedUser);
+                    if (u && u.uid) {
+                        // Mark that we're checking auth — hide page until confirmed
+                        document.documentElement.style.visibility = 'hidden';
+                        // Safety: if Firebase takes >3s, show login anyway
+                        setTimeout(() => { document.documentElement.style.visibility = 'visible'; }, 3000);
+                    }
+                } catch(e) {}
+            }
         })();
     </script>
     <script type="module">
@@ -791,7 +806,8 @@
             signInWithEmailAndPassword,
             createUserWithEmailAndPassword,
             GoogleAuthProvider,
-            signInWithPopup
+            signInWithPopup,
+            onAuthStateChanged
         } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
         import {
@@ -818,6 +834,21 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
+
+        // Auto-redirect if user is already logged in
+        // This is the authoritative check — Firebase SDK verifies the auth token
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                // User is already authenticated — save profile and go to dashboard
+                try {
+                    await saveCurrentUser(user);
+                } catch(e) { /* profile save failed, still redirect */ }
+                window.location.href = '/dashboard';
+            } else {
+                // Not logged in — show the login page
+                document.documentElement.style.visibility = 'visible';
+            }
+        });
 
         async function saveCurrentUser(user) {
             let profile = {

@@ -132,6 +132,7 @@ class PipelineSession:
         self.progress_log = []
         self.cleaning_suggestions = None
         self.hyperopt_results = None
+        self.feature_engineering_report = None
         
         # Dataset versioning / checkpoints
         self._checkpoints = {}  # label -> (df_copy, metadata)
@@ -1281,6 +1282,8 @@ class PipelineManager:
             result['clean_report'] = session.clean_report
         if session.transform_report:
             result['transform_report'] = session.transform_report
+        if hasattr(session, 'feature_engineering_report') and session.feature_engineering_report:
+            result['feature_engineering_report'] = session.feature_engineering_report
 
         if session.training_results:
             result['training_results'] = _serialize_training_results(session.training_results)

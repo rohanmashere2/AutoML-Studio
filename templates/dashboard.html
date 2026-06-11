@@ -2102,6 +2102,12 @@
                             <div class="sr"><span>Status</span><span>—</span></div>
                         </div>
                     </div>
+                    <div class="card" id="feCard" style="display:none">
+                        <div class="card-hdr"><span class="card-title">⚙️ Feature Engineering</span><span class="tag tb">Auto</span></div>
+                        <div id="feReport">
+                            <div class="sr"><span>Status</span><span>—</span></div>
+                        </div>
+                    </div>
                 </div>
                 <div class="card">
                     <div class="card-hdr"><span class="card-title">Column Fate Tracker</span><span class="tag tb">Full
@@ -4100,22 +4106,27 @@
         function populateResults(results) {
             if (!results) return;
             const lb = results.leaderboard || results.model_results || [];
-            const best = lb[0] || {};
+            // Filter out failed models for display
+            const successfulModels = lb.filter(m => m.primary_metric > -900 && !m.failed);
+            const best = successfulModels[0] || lb[0] || {};
             const metrics = best.metrics || {};
             const score = best.primary_metric ?? metrics.f1 ?? metrics.accuracy ?? metrics.r2 ?? 0;
             const auc = metrics.roc_auc ?? metrics.auc ?? 0;
             const problemType = (results.problem_type || S.profileData?.problem_type || '').toLowerCase();
+            const isRegression = problemType === 'regression';
+            const failedCount = lb.length - successfulModels.length;
 
-            // Overview KPIs
-            document.getElementById('ovBestScore').textContent = (score * 100).toFixed(1) + '%';
+            // Overview KPIs — format score based on problem type
+            const scoreDisplay = isRegression ? score.toFixed(4) : (score * 100).toFixed(1) + '%';
+            document.getElementById('ovBestScore').textContent = scoreDisplay;
             document.getElementById('ovBestSub').textContent = (best.model || best.model_name || 'Best model');
             document.getElementById('ovBestBadge').textContent = (best.model || best.model_name || '—') + ' leads';
-            document.getElementById('ovModels').textContent = lb.length;
+            document.getElementById('ovModels').textContent = successfulModels.length + (failedCount > 0 ? ` (${failedCount} failed)` : '');
             document.getElementById('ovDrift').textContent = 'OK';
             document.getElementById('ovDriftSub').textContent = 'No drift detected yet';
             document.getElementById('ovDeploy').textContent = 'Ready';
             document.getElementById('ovDeploySub').textContent = 'REST API available';
-            document.getElementById('overviewSub').textContent = `${S.fileName} · ${best.model || '—'} · ${(score * 100).toFixed(1)}% · Last run just now`;
+            document.getElementById('overviewSub').textContent = `${S.fileName} · ${best.model || '—'} · ${scoreDisplay} · Last run just now`;
 
             // Project info card
             const infoCard = document.getElementById('projectInfoCard');
@@ -4161,20 +4172,20 @@
             loadShap();
 
             // Leaderboard page
-            document.getElementById('lbSub').textContent = `${lb.length} models · ${best.model || '—'} leads at ${(score * 100).toFixed(1)}%`;
-            document.getElementById('lbBest').textContent = (score * 100).toFixed(1) + '%';
+            document.getElementById('lbSub').textContent = `${successfulModels.length} models · ${best.model || '—'} leads at ${scoreDisplay}`;
+            document.getElementById('lbBest').textContent = scoreDisplay;
             document.getElementById('lbBestModel').textContent = best.model || best.model_name || '—';
-            if (problemType === 'regression') {
-                document.getElementById('lbMetricLabel').textContent = 'Best R2';
+            if (isRegression) {
+                document.getElementById('lbMetricLabel').textContent = 'Best R²';
                 document.getElementById('lbMetricSub').textContent = 'Best model';
                 const r2 = metrics.r2 ?? score;
-                document.getElementById('lbAuc').textContent = (typeof r2 === 'number') ? r2.toFixed(3) : '—';
+                document.getElementById('lbAuc').textContent = (typeof r2 === 'number') ? r2.toFixed(4) : '—';
             } else {
                 document.getElementById('lbMetricLabel').textContent = 'Best AUC-ROC';
                 document.getElementById('lbMetricSub').textContent = 'Best model';
                 document.getElementById('lbAuc').textContent = auc ? auc.toFixed(3) : '—';
             }
-            document.getElementById('lbCount').textContent = lb.length;
+            document.getElementById('lbCount').textContent = successfulModels.length;
             renderLeaderboard(lb);
 
             // Predict
@@ -4203,15 +4214,20 @@
             const ctx = document.getElementById('accChart');
             if (!ctx) return;
             if (charts.acc) charts.acc.destroy();
-            const labels = lb.map((m, i) => m.model?.split(/(?=[A-Z])/).join(' ').substring(0, 10) || 'M' + (i + 1));
-            const scores = lb.map(m => ((m.primary_metric ?? m.metrics?.f1 ?? m.metrics?.accuracy ?? m.metrics?.r2 ?? 0) * 100).toFixed(1));
+            const isReg = S.trainResults?.problem_type === 'regression';
+            // Filter out failed models
+            const valid = lb.filter(m => m.primary_metric > -900 && !m.failed);
+            if (!valid.length) return;
+            const labels = valid.map((m, i) => m.model?.split(/(?=[A-Z])/).join(' ').substring(0, 10) || 'M' + (i + 1));
+            const scores = valid.map(m => isReg ? m.primary_metric : ((m.primary_metric ?? 0) * 100));
+            const yMin = isReg ? Math.max(0, Math.min(...scores) - 0.1) : Math.max(0, Math.min(...scores) - 10);
             charts.acc = new Chart(ctx, {
                 type: 'line', data: {
                     labels,
                     datasets: [{ data: scores, borderColor: '#6366F1', backgroundColor: 'rgba(99,102,241,.1)', fill: true, tension: .4, pointRadius: 4, pointBackgroundColor: '#6366F1' }]
                 }, options: {
                     responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
-                    scales: { y: { min: Math.max(0, Math.min(...scores) - 10), ticks: { callback: v => v + '%', font: { size: 9 } }, grid: { color: 'rgba(0,0,0,.05)' } }, x: { grid: { display: false }, ticks: { font: { size: 9 } } } }
+                    scales: { y: { min: yMin, ticks: { callback: v => isReg ? v.toFixed(2) : v + '%', font: { size: 9 } }, grid: { color: 'rgba(0,0,0,.05)' } }, x: { grid: { display: false }, ticks: { font: { size: 9 } } } }
                 }
             });
         }
@@ -4220,35 +4236,75 @@
             const container = document.getElementById('lbTable');
             if (!lb.length) { container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--txt2)">No models</div>'; return; }
 
-            let html = `<table><thead><tr><th>#</th><th>Model</th><th>Score</th><th>F1</th><th>AUC-ROC</th><th>Train Time</th><th>Status</th></tr></thead><tbody>`;
-            lb.forEach((m, i) => {
+            const isRegression = S.trainResults?.problem_type === 'regression';
+            const metricLabel = isRegression ? 'R²' : 'Score';
+            const extraCol1 = isRegression ? 'MAPE' : 'F1';
+            const extraCol2 = isRegression ? 'Adj R²' : 'AUC-ROC';
+
+            let html = `<table><thead><tr><th>#</th><th>Model</th><th>${metricLabel}</th><th>${extraCol1}</th><th>${extraCol2}</th><th>CV Mean</th><th>Status</th></tr></thead><tbody>`;
+            
+            // Separate successful and failed models
+            const successful = lb.filter(m => m.primary_metric > -900 && !m.failed);
+            const failed = lb.filter(m => m.primary_metric <= -900 || m.failed);
+            const sorted = [...successful, ...failed];
+            
+            sorted.forEach((m, i) => {
                 const mets = m.metrics || {};
-                const score = m.primary_metric ?? mets.f1 ?? mets.accuracy ?? mets.r2 ?? 0;
-                const f1 = mets.f1 ?? mets.f1_score ?? 0;
-                const auc = mets.roc_auc ?? mets.auc ?? 0;
+                const isFailed = m.primary_metric <= -900 || m.failed || mets.error;
                 const name = m.model || m.model_name || 'Model ' + (i + 1);
-                const time = m.train_time ? m.train_time.toFixed(2) + 's' : '—';
-                const statusTag = i === 0 ? '<span class="tag tg">Deployed</span>' : i < 3 ? '<span class="tag tb">Candidate</span>' : '<span class="tag ta">Archived</span>';
-                html += `<tr ${i === 0 ? 'style="background:#F0F4FF"' : ''}>
-      <td><strong>${i + 1}</strong></td>
-      <td><strong style="color:${i === 0 ? 'var(--accent)' : 'var(--txt)'}">${name}</strong></td>
-      <td><strong style="color:${i === 0 ? 'var(--accent)' : 'var(--txt)'}">${(score * 100).toFixed(1)}%</strong></td>
-      <td>${f1 ? (f1 * 100).toFixed(1) + '%' : '—'}</td>
-      <td>${auc ? auc.toFixed(3) : '—'}</td>
-      <td>${time}</td>
-      <td>${statusTag}</td>
-    </tr>`;
+
+                if (isFailed) {
+                    const errMsg = mets.error ? ` title="${mets.error.substring(0, 100)}"` : '';
+                    html += `<tr style="opacity:0.5">
+                        <td><strong>${i + 1}</strong></td>
+                        <td><strong>${name}</strong></td>
+                        <td colspan="3" style="text-align:center;color:var(--txt2);font-size:11px"${errMsg}>Training failed</td>
+                        <td>—</td>
+                        <td><span class="tag" style="background:#FEE2E2;color:#991B1B">Failed</span></td>
+                    </tr>`;
+                    return;
+                }
+
+                const score = m.primary_metric ?? 0;
+                let col1, col2;
+                if (isRegression) {
+                    col1 = mets.mape != null ? mets.mape.toFixed(1) + '%' : '—';
+                    col2 = mets.adjusted_r2 != null ? mets.adjusted_r2.toFixed(3) : '—';
+                } else {
+                    col1 = mets.f1 ? (mets.f1 * 100).toFixed(1) + '%' : '—';
+                    col2 = mets.roc_auc ? mets.roc_auc.toFixed(3) : '—';
+                }
+                const cvMean = mets.cv_mean != null ? (mets.cv_mean * 100).toFixed(1) + '%' : '—';
+                const isTop = i === 0;
+                const statusTag = isTop ? '<span class="tag tg">Best</span>' : 
+                    m.model === 'Stacked Ensemble' ? '<span class="tag tb">Ensemble</span>' :
+                    i < 3 ? '<span class="tag tb">Candidate</span>' : '<span class="tag ta">Archived</span>';
+                const scoreDisplay = isRegression ? score.toFixed(4) : (score * 100).toFixed(1) + '%';
+                
+                html += `<tr ${isTop ? 'style="background:#F0F4FF"' : ''}>
+                    <td><strong>${i + 1}</strong></td>
+                    <td><strong style="color:${isTop ? 'var(--accent)' : 'var(--txt)'}">${name}</strong>
+                        ${mets.tuned ? '<span style="font-size:9px;color:#059669;margin-left:4px">⚡tuned</span>' : ''}
+                    </td>
+                    <td><strong style="color:${isTop ? 'var(--accent)' : 'var(--txt)'}">${scoreDisplay}</strong></td>
+                    <td>${col1}</td>
+                    <td>${col2}</td>
+                    <td>${cvMean}</td>
+                    <td>${statusTag}</td>
+                </tr>`;
             });
             html += '</tbody></table>';
             container.innerHTML = html;
 
-            // Bar chart
+            // Bar chart — only successful models
             const ctx = document.getElementById('lbChart');
             if (ctx) {
                 if (charts.lb) charts.lb.destroy();
-                const labels = lb.map((m, i) => (m.model || 'M' + (i + 1)).substring(0, 8));
-                const data = lb.map(m => ((m.primary_metric ?? m.metrics?.accuracy ?? m.metrics?.r2 ?? 0) * 100).toFixed(1));
-                charts.lb = new Chart(ctx, { type: 'bar', data: { labels, datasets: [{ data, backgroundColor: ['#6366F1', '#818CF8', '#A5B4FC', '#C7D2FE', '#DDE1FF', '#E0E7FF', '#EEF2FF'], borderRadius: 3 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { font: { size: 9 } } }, y: { ticks: { callback: v => v + '%', font: { size: 9 } }, grid: { color: 'rgba(0,0,0,.05)' } } } } });
+                const chartModels = successful.slice(0, 10);
+                const labels = chartModels.map(m => (m.model || 'M').substring(0, 10));
+                const data = chartModels.map(m => isRegression ? m.primary_metric : ((m.primary_metric ?? 0) * 100));
+                const yLabel = isRegression ? 'R² Score' : 'Accuracy %';
+                charts.lb = new Chart(ctx, { type: 'bar', data: { labels, datasets: [{ data, backgroundColor: ['#6366F1', '#818CF8', '#A5B4FC', '#C7D2FE', '#DDE1FF', '#E0E7FF', '#EEF2FF', '#F5F3FF', '#FAF5FF', '#FDF4FF'], borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { font: { size: 9 } } }, y: { ticks: { callback: v => isRegression ? v.toFixed(2) : v + '%', font: { size: 9 } }, grid: { color: 'rgba(0,0,0,.05)' } } } } });
             }
 
             // Best params
@@ -4307,6 +4363,23 @@
     <div class="sr"><span>Final cols</span><span style="font-weight:700">${typeof finalCols === 'number' ? finalCols.toLocaleString() : finalCols}</span></div>
   `;
             document.getElementById('transformReport').innerHTML = transformHtml;
+
+            // Feature Engineering report (if available)
+            const feReport = data.feature_engineering_report;
+            const feCard = document.getElementById('feCard');
+            const feDiv = document.getElementById('feReport');
+            if (feReport && feReport.summary && feReport.summary.total_features_created > 0) {
+                feCard.style.display = '';
+                const feSteps = Array.isArray(feReport.steps) ? feReport.steps : [];
+                let feHtml = '';
+                feSteps.filter(s => s.applied).forEach(s => {
+                    feHtml += `<div class="sr"><span>${s.icon || '⚙️'} ${s.name}</span><span style="font-weight:700">${s.count} features</span></div>`;
+                });
+                feHtml += `<div class="sr" style="border-top:1px solid var(--brd);margin-top:6px;padding-top:6px"><span><strong>Total engineered</strong></span><span style="font-weight:700;color:var(--accent)">${feReport.summary.total_features_created}</span></div>`;
+                feDiv.innerHTML = feHtml;
+            } else {
+                feCard.style.display = 'none';
+            }
 
             // Column fate tracker
             const profileCols = S.profileData?.column_info || normalized.column_info || [];
