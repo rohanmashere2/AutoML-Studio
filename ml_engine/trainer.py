@@ -268,27 +268,30 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
             progress_callback(f'Training {name}...', int((idx / total_models) * 100))
         
         try:
-            # Use early stopping for boosting models
+            # Use early stopping for boosting models (try plain fit first as safety)
             if name in ('XGBoost', 'LightGBM'):
+                # Step 1: Always do a plain fit first (this always works)
+                plain_model = get_models(problem_type).get(name)
+                plain_model.fit(X_train, y_train)
+                model = plain_model
+                # Step 2: Try early stopping as an upgrade
                 try:
-                    model.set_params(early_stopping_rounds=20)
-                    model.fit(X_train, y_train,
-                              eval_set=[(X_test, y_test)],
-                              verbose=False)
-                except (TypeError, Exception):
-                    # Fallback: train without early stopping
-                    try:
-                        model = get_models(problem_type).get(name)  # get fresh model
-                        model.fit(X_train, y_train)
-                    except Exception:
-                        model.fit(X_train, y_train)
+                    es_model = get_models(problem_type).get(name)
+                    es_model.set_params(early_stopping_rounds=20)
+                    es_model.fit(X_train, y_train,
+                                 eval_set=[(X_test, y_test)],
+                                 verbose=False)
+                    model = es_model  # Use early-stopped version if it worked
+                except Exception:
+                    pass  # Keep the plain-fit model
             elif name == 'CatBoost':
                 try:
                     model.fit(X_train, y_train,
                               eval_set=(X_test, y_test),
                               early_stopping_rounds=20,
                               verbose=False)
-                except (TypeError, Exception):
+                except Exception:
+                    model = get_models(problem_type).get(name)
                     model.fit(X_train, y_train)
             else:
                 model.fit(X_train, y_train)
