@@ -3867,13 +3867,22 @@
 
             // Overview profile card
             const prof = document.getElementById('ovProfile');
-            if (prof) prof.innerHTML = `
+            if (prof) {
+                let profHtml = `
     <div class="sr"><span>Rows</span><span style="font-weight:700">${(data.n_rows || 0).toLocaleString()}</span></div>
     <div class="sr"><span>Features</span><span style="font-weight:700">${data.n_cols || '—'}</span></div>
     <div class="sr"><span>Target</span><span style="font-weight:700">${data.target_column || data.recommended_target || '—'}</span></div>
     <div class="sr"><span>Problem</span><span style="font-weight:700">${data.problem_type || '—'}</span></div>
-    <div class="sr"><span>Session</span><span style="font-family:var(--mono);font-size:10px">${data.session_id || '—'}</span></div>
-  `;
+    <div class="sr"><span>Session</span><span style="font-family:var(--mono);font-size:10px">${data.session_id || '—'}</span></div>`;
+                // Show detection badges
+                if (data.is_timeseries) {
+                    profHtml += '<div class="sr"><span>Time Series</span><span class="tag tb" style="font-size:10px">📈 Detected</span></div>';
+                }
+                if (data.has_text_columns && (data.text_columns || []).length > 0) {
+                    profHtml += `<div class="sr"><span>Text Columns</span><span class="tag tg" style="font-size:10px">📝 ${(data.text_columns || []).length} detected</span></div>`;
+                }
+                prof.innerHTML = profHtml;
+            }
 
             // Data quality card
             const dq = document.getElementById('ovQuality');
