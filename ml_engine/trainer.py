@@ -26,9 +26,10 @@ from sklearn.metrics import (
     mean_absolute_error, mean_squared_error, r2_score,
     confusion_matrix
 )
-from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, Lasso
+from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, Lasso, ElasticNet
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
+from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
 from sklearn.svm import SVC, SVR
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 
@@ -135,6 +136,7 @@ def get_models(problem_type, class_weight_balanced=False):
             'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, random_state=42),
             'SVM': SVC(probability=True, random_state=42, max_iter=5000),
             'KNN': KNeighborsClassifier(),
+            'Extra Trees': ExtraTreesClassifier(n_estimators=100, random_state=42),
         }
         if class_weight_balanced:
             models['Logistic Regression'] = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
@@ -156,6 +158,8 @@ def get_models(problem_type, class_weight_balanced=False):
             'Gradient Boosting': GradientBoostingRegressor(n_estimators=100, random_state=42),
             'SVR': SVR(),
             'KNN': KNeighborsRegressor(),
+            'Extra Trees': ExtraTreesRegressor(n_estimators=100, random_state=42),
+            'ElasticNet': ElasticNet(random_state=42),
         }
         if HAS_XGB:
             models['XGBoost'] = XGBRegressor(n_estimators=100, random_state=42, verbosity=0)
@@ -249,6 +253,12 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
         X_test = apply_scaler(X_test, fitted_scaler, numeric_cols_to_scale)
         # Store fitted scaler in transform_metadata for inference
         transform_metadata['scaler'] = fitted_scaler
+    
+    # Force consistent dtypes — prevents XGBoost DataFrame.dtypes errors
+    X_train = X_train.astype(np.float32)
+    X_test = X_test.astype(np.float32)
+    X_train.columns = [str(c) for c in X_train.columns]
+    X_test.columns = [str(c) for c in X_test.columns]
     
     # Get models
     models = get_models(problem_type)
