@@ -142,7 +142,7 @@ def get_models(problem_type, class_weight_balanced=False):
             models['SVM'] = SVC(probability=True, random_state=42, max_iter=5000, class_weight='balanced')
         
         if HAS_XGB:
-            models['XGBoost'] = XGBClassifier(n_estimators=100, random_state=42, eval_metric='logloss', verbosity=0)
+            models['XGBoost'] = XGBClassifier(n_estimators=100, random_state=42, verbosity=0)
         if HAS_CATBOOST:
             models['CatBoost'] = CatBoostClassifier(iterations=100, random_state=42, verbose=0)
         if HAS_LGBM:
@@ -209,6 +209,17 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
 
     # Now ensure all numeric (should be after encoding)
     X = X.select_dtypes(include=[np.number])
+
+    # Clean inf/NaN — XGBoost crashes on these
+    X = X.replace([np.inf, -np.inf], np.nan)
+    X = X.fillna(0)
+
+    # For classification: ensure labels are contiguous integers (0, 1, 2...)
+    # XGBoost requires this — raw labels like [1, 3, 5] will crash it
+    if problem_type == 'classification':
+        from sklearn.preprocessing import LabelEncoder
+        le = LabelEncoder()
+        y = pd.Series(le.fit_transform(y), index=y.index, name=y.name)
     
     if X.empty:
         return {'error': 'No numeric features available for training.'}
