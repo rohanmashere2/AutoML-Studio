@@ -4,6 +4,7 @@ Trains multiple ML models, cross-validates, tunes hyperparameters, and returns a
 """
 
 import logging
+import time
 import pandas as pd
 import numpy as np
 import joblib
@@ -89,6 +90,12 @@ CLASSIFICATION_PARAMS = {
         'C': [0.01, 0.1, 1, 10],
         'max_iter': [500, 1000],
     },
+    'Extra Trees': {
+        'n_estimators': [50, 100, 200, 300],
+        'max_depth': [3, 5, 10, 15, None],
+        'min_samples_split': [2, 5, 10],
+        'min_samples_leaf': [1, 2, 4],
+    },
 }
 
 REGRESSION_PARAMS = {
@@ -123,6 +130,15 @@ REGRESSION_PARAMS = {
     },
     'Lasso': {
         'alpha': [0.001, 0.01, 0.1, 1, 10],
+    },
+    'Extra Trees': {
+        'n_estimators': [50, 100, 200, 300],
+        'max_depth': [3, 5, 10, 15, None],
+        'min_samples_split': [2, 5, 10],
+    },
+    'ElasticNet': {
+        'alpha': [0.001, 0.01, 0.1, 1, 10],
+        'l1_ratio': [0.1, 0.3, 0.5, 0.7, 0.9],
     },
 }
 
@@ -288,6 +304,7 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
         if progress_callback:
             progress_callback(f'Training {name}...', int((idx / total_models) * 100))
         
+        model_start_time = time.time()
         try:
             # Use early stopping for boosting models (try plain fit first as safety)
             if name in ('XGBoost', 'LightGBM'):
@@ -350,11 +367,14 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
                     'cv_std': cv_results[name]['std'],
                 }
                 
-                # ROC-AUC
+                # ROC-AUC (binary + multiclass)
                 try:
-                    if is_binary and hasattr(model, 'predict_proba'):
-                        y_proba = model.predict_proba(X_test)[:, 1]
-                        metrics['roc_auc'] = round(float(roc_auc_score(y_test, y_proba)), 4)
+                    if hasattr(model, 'predict_proba'):
+                        y_proba = model.predict_proba(X_test)
+                        if is_binary:
+                            metrics['roc_auc'] = round(float(roc_auc_score(y_test, y_proba[:, 1])), 4)
+                        else:
+                            metrics['roc_auc'] = round(float(roc_auc_score(y_test, y_proba, multi_class='ovr', average='weighted')), 4)
                     else:
                         metrics['roc_auc'] = None
                 except Exception:
@@ -385,11 +405,13 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
                 metrics['explained_variance'] = round(float(1 - np.var(y_test - y_test_pred) / max(np.var(y_test), 1e-10)), 4)
                 primary_metric = metrics['r2']
             
+            train_time = round(time.time() - model_start_time, 2)
             leaderboard.append({
                 'rank': 0,  # Will be set after sorting
                 'model': name,
                 'primary_metric': round(float(primary_metric), 4),
                 'metrics': metrics,
+                'training_time': train_time,
             })
         except Exception as e:
             logger.warning(f"Model {name} failed: {e}")
@@ -571,7 +593,7 @@ def _get_feature_importance(model, feature_names):
 
 
 def _optuna_tune(model_name, problem_type, param_grid, X_train, y_train,
-                 X_test, y_test, scoring, n_trials=20):
+                  X_test, y_test, scoring, n_trials=50):
     """Tune a model using Optuna Bayesian optimization (or RandomizedSearchCV fallback).
     
     Returns:

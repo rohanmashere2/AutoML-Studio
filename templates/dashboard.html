@@ -36,6 +36,27 @@
             --mono: 'IBM Plex Mono', monospace;
         }
 
+        body.dark {
+            --bg0: #0f0f23;
+            --bg1: #1a1a2e;
+            --bg2: #16213e;
+            --txt: #e0e0f0;
+            --txt2: #8b8fa3;
+            --bdr: #2a2a4a;
+            --bdr2: #3a3a5a;
+            --accent: #818cf8;
+            --accent2: #22d3ee;
+            --success: #34d399;
+            --warn: #fbbf24;
+            --danger: #f87171;
+        }
+        body.dark .card { background: var(--bg1); border-color: var(--bdr); }
+        body.dark table thead { background: var(--bg2); }
+        body.dark table tr:hover { background: rgba(99,102,241,0.08); }
+        body.dark input, body.dark select, body.dark textarea { background: var(--bg2); color: var(--txt); border-color: var(--bdr); }
+        body.dark .sidebar { background: var(--bg0); }
+        body.dark .hdr { background: var(--bg0); border-color: var(--bdr); }
+
         body {
             font-family: var(--font);
             background: var(--bg2);
@@ -1889,6 +1910,7 @@
             </div>
             <div class="topbar-right">
                 <button class="btn" id="exportBtn" style="display:none" onclick="exportReport()">⬇ Report</button>
+                <button class="btn" onclick="toggleDarkMode()" title="Toggle dark mode" style="font-size:16px;padding:4px 10px" id="darkModeBtn">🌙</button>
                 <button class="btn" onclick="openModal()">📂 Upload Dataset</button>
                 <button class="btn primary" id="newExpBtn" style="display:none" onclick="openModal()">+ New
                     Experiment</button>
@@ -2263,6 +2285,16 @@
                     <div class="card">
                         <div class="card-hdr"><span class="card-title">Learning Curve</span><span class="tag ta" id="lcModelBadge">Best model</span></div>
                         <div class="ch" style="height:300px"><canvas id="lcChart"></canvas></div>
+                    </div>
+                </div>
+                <div class="g2" id="cmFiRow" style="display:none">
+                    <div class="card">
+                        <div class="card-hdr"><span class="card-title">Confusion Matrix</span><span class="tag tb" id="cmBadge">Best model</span></div>
+                        <div id="cmContainer" style="padding:12px;overflow-x:auto"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-hdr"><span class="card-title">Feature Importance</span><span class="tag tg">Top 15</span></div>
+                        <div class="ch" style="height:300px"><canvas id="fiChart"></canvas></div>
                     </div>
                 </div>
             </div>
@@ -4280,7 +4312,7 @@
             const extraCol1 = isRegression ? 'MAPE' : 'F1';
             const extraCol2 = isRegression ? 'Adj R²' : 'AUC-ROC';
 
-            let html = `<table><thead><tr><th>#</th><th>Model</th><th>${metricLabel}</th><th>${extraCol1}</th><th>${extraCol2}</th><th>CV Mean</th><th>Status</th></tr></thead><tbody>`;
+            let html = `<table><thead><tr><th>#</th><th>Model</th><th>${metricLabel}</th><th>${extraCol1}</th><th>${extraCol2}</th><th>CV Mean</th><th>Time</th><th>Status</th></tr></thead><tbody>`;
             
             // Separate successful and failed models
             const successful = lb.filter(m => m.primary_metric > -900 && !m.failed);
@@ -4298,6 +4330,7 @@
                         <td><strong>${i + 1}</strong></td>
                         <td><strong>${name}</strong></td>
                         <td colspan="3" style="text-align:center;color:var(--txt2);font-size:11px"${errMsg}>Training failed</td>
+                        <td>—</td>
                         <td>—</td>
                         <td><span class="tag" style="background:#FEE2E2;color:#991B1B">Failed</span></td>
                     </tr>`;
@@ -4329,6 +4362,7 @@
                     <td>${col1}</td>
                     <td>${col2}</td>
                     <td>${cvMean}</td>
+                    <td style="font-size:11px;color:var(--txt2)">${m.training_time != null ? m.training_time + 's' : '—'}</td>
                     <td>${statusTag}</td>
                 </tr>`;
             });
@@ -4410,6 +4444,11 @@
                     document.getElementById('radarLcRow').style.display = '';
                     renderRadarChart(successful);
                 }
+
+                // Confusion matrix + Feature importance (from training results, not diagnostics)
+                renderConfusionMatrix(successful);
+                const fi = S.trainResults?.feature_importance;
+                if (fi) renderFeatureImportance(fi);
             } catch(e) { console.warn('Diagnostic charts:', e); }
         }
 
@@ -4498,6 +4537,74 @@
                     }
                 }
             });
+        }
+
+        function renderConfusionMatrix(lb) {
+            const best = lb.filter(m => !m.failed && m.metrics?.confusion_matrix)[0];
+            if (!best) return;
+            const cm = best.metrics.confusion_matrix;
+            if (!cm || !cm.length) return;
+            document.getElementById('cmFiRow').style.display = '';
+            document.getElementById('cmBadge').textContent = best.model;
+            const n = cm.length;
+            const maxVal = Math.max(...cm.flat());
+            let html = '<table style="border-collapse:collapse;width:100%;font-size:11px;text-align:center">';
+            html += '<tr><td></td>';
+            for (let j = 0; j < n; j++) html += `<td style="padding:4px 6px;font-weight:600;color:var(--txt2)">P:${j}</td>`;
+            html += '</tr>';
+            for (let i = 0; i < n; i++) {
+                html += `<tr><td style="padding:4px 6px;font-weight:600;color:var(--txt2)">A:${i}</td>`;
+                for (let j = 0; j < n; j++) {
+                    const v = cm[i][j];
+                    const intensity = maxVal > 0 ? v / maxVal : 0;
+                    const isDiag = i === j;
+                    const bg = isDiag ? `rgba(99,102,241,${0.1+intensity*0.6})` : `rgba(239,68,68,${intensity*0.4})`;
+                    const fw = isDiag ? '700' : '400';
+                    html += `<td style="padding:8px;background:${bg};font-weight:${fw};border-radius:4px;border:2px solid var(--bg0)">${v}</td>`;
+                }
+                html += '</tr>';
+            }
+            html += '</table>';
+            html += '<div style="font-size:9px;color:var(--txt2);margin-top:6px;text-align:center">A = Actual, P = Predicted</div>';
+            document.getElementById('cmContainer').innerHTML = html;
+        }
+
+        function renderFeatureImportance(fi) {
+            if (!fi || !fi.length) return;
+            document.getElementById('cmFiRow').style.display = '';
+            const ctx = document.getElementById('fiChart');
+            if (!ctx) return;
+            if (charts.fi) charts.fi.destroy();
+            const top = fi.slice(0, 15).reverse();
+            charts.fi = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: top.map(f => f.feature.length > 18 ? f.feature.substring(0,16)+'…' : f.feature),
+                    datasets: [{ data: top.map(f => f.importance), backgroundColor: '#6366F1', borderRadius: 3 }]
+                },
+                options: {
+                    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { title: { display: true, text: 'Importance', font: { size: 10 } }, ticks: { font: { size: 9 } }, grid: { color: 'rgba(0,0,0,.05)' } },
+                        y: { ticks: { font: { size: 9 } }, grid: { display: false } }
+                    }
+                }
+            });
+        }
+
+        function toggleDarkMode() {
+            document.body.classList.toggle('dark');
+            const isDark = document.body.classList.contains('dark');
+            localStorage.setItem('aml_dark', isDark ? '1' : '0');
+            const btn = document.getElementById('darkModeBtn');
+            if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+        }
+        // Restore dark mode preference
+        if (localStorage.getItem('aml_dark') === '1') {
+            document.body.classList.add('dark');
+            const btn = document.getElementById('darkModeBtn');
+            if (btn) btn.textContent = '☀️';
         }
 
         function populatePipelineReports(data) {
