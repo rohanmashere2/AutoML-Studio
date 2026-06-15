@@ -10,7 +10,11 @@ import numpy as np
 import joblib
 import os
 import warnings
+import copy
 warnings.filterwarnings('ignore')
+
+from collections import OrderedDict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,9 @@ from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, La
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
+from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
+from sklearn.ensemble import AdaBoostClassifier, AdaBoostRegressor
+from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVC, SVR
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 
@@ -96,6 +103,18 @@ CLASSIFICATION_PARAMS = {
         'min_samples_split': [2, 5, 10],
         'min_samples_leaf': [1, 2, 4],
     },
+    'HistGBM': {
+        'learning_rate': [0.01, 0.05, 0.1, 0.2],
+        'max_iter': [50, 100, 200, 300],
+        'max_depth': [3, 5, 7, 10, None],
+        'max_leaf_nodes': [15, 31, 63, 127, None],
+        'min_samples_leaf': [5, 10, 20, 50],
+        'l2_regularization': [0.0, 0.01, 0.1, 1.0],
+    },
+    'AdaBoost': {
+        'n_estimators': [50, 100, 200, 300],
+        'learning_rate': [0.01, 0.05, 0.1, 0.5, 1.0],
+    },
 }
 
 REGRESSION_PARAMS = {
@@ -140,49 +159,96 @@ REGRESSION_PARAMS = {
         'alpha': [0.001, 0.01, 0.1, 1, 10],
         'l1_ratio': [0.1, 0.3, 0.5, 0.7, 0.9],
     },
+    'HistGBM': {
+        'learning_rate': [0.01, 0.05, 0.1, 0.2],
+        'max_iter': [50, 100, 200, 300],
+        'max_depth': [3, 5, 7, 10, None],
+        'max_leaf_nodes': [15, 31, 63, 127, None],
+        'min_samples_leaf': [5, 10, 20, 50],
+        'l2_regularization': [0.0, 0.01, 0.1, 1.0],
+    },
+    'AdaBoost': {
+        'n_estimators': [50, 100, 200, 300],
+        'learning_rate': [0.01, 0.05, 0.1, 0.5, 1.0],
+    },
 }
 
 
-def get_models(problem_type, class_weight_balanced=False):
-    """Get a dict of model_name -> model_instance based on problem type."""
+def _detect_gpu():
+    """Check if CUDA GPU is available for accelerated training."""
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except ImportError:
+        return False
+
+HAS_GPU = _detect_gpu()
+
+
+def get_models(problem_type, class_weight_balanced=False, n_samples=None):
+    """Get an OrderedDict of model_name -> model_instance, ordered fast-first.
+    
+    Args:
+        problem_type: 'classification' or 'regression'
+        class_weight_balanced: Use balanced class weights for supported models
+        n_samples: Number of training samples (used to skip slow models on large data)
+    """
+    # GPU-accelerated params for boosters
+    xgb_extra = {'tree_method': 'gpu_hist', 'device': 'cuda'} if HAS_GPU else {}
+    lgbm_extra = {'device': 'gpu'} if HAS_GPU else {}
+
     if problem_type == 'classification':
-        models = {
-            'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
-            'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
-            'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, random_state=42),
-            'SVM': SVC(probability=True, random_state=42, max_iter=5000),
-            'KNN': KNeighborsClassifier(),
-            'Extra Trees': ExtraTreesClassifier(n_estimators=100, random_state=42),
-        }
+        # Ordered: fast baselines → medium ensembles → slow boosters → very slow
+        models = OrderedDict([
+            ('Logistic Regression', LogisticRegression(max_iter=1000, random_state=42)),
+            ('Naive Bayes', GaussianNB()),
+            ('KNN', KNeighborsClassifier()),
+            ('AdaBoost', AdaBoostClassifier(n_estimators=100, random_state=42)),
+            ('HistGBM', HistGradientBoostingClassifier(max_iter=100, random_state=42)),
+            ('Random Forest', RandomForestClassifier(n_estimators=100, random_state=42)),
+            ('Extra Trees', ExtraTreesClassifier(n_estimators=100, random_state=42)),
+            ('Gradient Boosting', GradientBoostingClassifier(n_estimators=100, random_state=42)),
+        ])
         if class_weight_balanced:
             models['Logistic Regression'] = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
             models['Random Forest'] = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
-            models['SVM'] = SVC(probability=True, random_state=42, max_iter=5000, class_weight='balanced')
         
+        if HAS_LGBM:
+            models['LightGBM'] = LGBMClassifier(n_estimators=100, random_state=42, verbose=-1, **lgbm_extra)
         if HAS_XGB:
-            models['XGBoost'] = XGBClassifier(n_estimators=100, random_state=42, verbosity=0)
+            models['XGBoost'] = XGBClassifier(n_estimators=100, random_state=42, verbosity=0, **xgb_extra)
         if HAS_CATBOOST:
             models['CatBoost'] = CatBoostClassifier(iterations=100, random_state=42, verbose=0)
-        if HAS_LGBM:
-            models['LightGBM'] = LGBMClassifier(n_estimators=100, random_state=42, verbose=-1)
+        
+        # Skip SVM on large datasets (O(n²) complexity)
+        if n_samples is None or n_samples <= 10000:
+            if class_weight_balanced:
+                models['SVM'] = SVC(probability=True, random_state=42, max_iter=5000, class_weight='balanced')
+            else:
+                models['SVM'] = SVC(probability=True, random_state=42, max_iter=5000)
     else:
-        models = {
-            'Linear Regression': LinearRegression(),
-            'Ridge': Ridge(random_state=42),
-            'Lasso': Lasso(random_state=42),
-            'Random Forest': RandomForestRegressor(n_estimators=100, random_state=42),
-            'Gradient Boosting': GradientBoostingRegressor(n_estimators=100, random_state=42),
-            'SVR': SVR(),
-            'KNN': KNeighborsRegressor(),
-            'Extra Trees': ExtraTreesRegressor(n_estimators=100, random_state=42),
-            'ElasticNet': ElasticNet(random_state=42),
-        }
+        models = OrderedDict([
+            ('Linear Regression', LinearRegression()),
+            ('Ridge', Ridge(random_state=42)),
+            ('Lasso', Lasso(random_state=42)),
+            ('ElasticNet', ElasticNet(random_state=42)),
+            ('KNN', KNeighborsRegressor()),
+            ('AdaBoost', AdaBoostRegressor(n_estimators=100, random_state=42)),
+            ('HistGBM', HistGradientBoostingRegressor(max_iter=100, random_state=42)),
+            ('Random Forest', RandomForestRegressor(n_estimators=100, random_state=42)),
+            ('Extra Trees', ExtraTreesRegressor(n_estimators=100, random_state=42)),
+            ('Gradient Boosting', GradientBoostingRegressor(n_estimators=100, random_state=42)),
+        ])
+        if HAS_LGBM:
+            models['LightGBM'] = LGBMRegressor(n_estimators=100, random_state=42, verbose=-1, **lgbm_extra)
         if HAS_XGB:
-            models['XGBoost'] = XGBRegressor(n_estimators=100, random_state=42, verbosity=0)
+            models['XGBoost'] = XGBRegressor(n_estimators=100, random_state=42, verbosity=0, **xgb_extra)
         if HAS_CATBOOST:
             models['CatBoost'] = CatBoostRegressor(iterations=100, random_state=42, verbose=0)
-        if HAS_LGBM:
-            models['LightGBM'] = LGBMRegressor(n_estimators=100, random_state=42, verbose=-1)
+        
+        # Skip SVR on large datasets
+        if n_samples is None or n_samples <= 10000:
+            models['SVR'] = SVR()
     
     return models
 
@@ -206,7 +272,7 @@ def _validate_training_data(X, y, problem_type):
     return errors
 
 
-def train_models(df, profile, transform_metadata, output_dir, progress_callback=None):
+def train_models(df, profile, transform_metadata, output_dir, progress_callback=None, time_budget_seconds=None):
     """
     Train all models, cross-validate, tune top models, and return results.
     
@@ -276,8 +342,11 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
     X_train.columns = [str(c) for c in X_train.columns]
     X_test.columns = [str(c) for c in X_test.columns]
     
-    # Get models
-    models = get_models(problem_type)
+    # Get models (pass n_samples to skip slow models on large datasets)
+    models = get_models(problem_type, n_samples=len(X_train))
+    
+    # Time budget tracking
+    training_start_time = time.time()
     
     # Train and evaluate all models
     leaderboard = []
@@ -301,6 +370,14 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
         cv_strategy = KFold(n_splits=n_folds, shuffle=True, random_state=42)
     
     for idx, (name, model) in enumerate(models.items()):
+        # Check time budget before each model
+        if time_budget_seconds is not None:
+            elapsed = time.time() - training_start_time
+            remaining = time_budget_seconds - elapsed
+            if remaining < 30:
+                logger.info(f"Time budget exhausted after {idx}/{total_models} models ({elapsed:.0f}s). Skipping remaining.")
+                break
+        
         if progress_callback:
             progress_callback(f'Training {name}...', int((idx / total_models) * 100))
         
@@ -447,7 +524,7 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
             try:
                 tuned_model, best_params, tuned_score = _optuna_tune(
                     name, problem_type, param_grids[name],
-                    X_train, y_train, X_test, y_test, scoring, n_trials=20
+                    X_train, y_train, X_test, y_test, scoring, n_trials=100
                 )
                 
                 tuned_results.append({
@@ -514,7 +591,52 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
             })
             trained_models['Stacked Ensemble'] = stack
     except Exception as e:
-        pass  # Ensemble is optional, don't fail
+        logger.warning(f"Stacking ensemble failed: {e}")
+    
+    # Build weighted ensemble from top models
+    try:
+        top_model_names = [e['model'] for e in leaderboard[:3] if e['primary_metric'] > -999 and e['model'] in trained_models]
+        if len(top_model_names) >= 2 and HAS_OPTUNA:
+            w_ensemble, w_score = _build_weighted_ensemble(
+                trained_models, top_model_names, X_test, y_test, problem_type
+            )
+            if w_ensemble is not None:
+                if problem_type == 'classification':
+                    w_metrics = {'accuracy': w_score, 'method': 'weighted_average'}
+                else:
+                    w_metrics = {'r2': w_score, 'method': 'weighted_average'}
+                leaderboard.append({
+                    'rank': 0, 'model': 'Weighted Ensemble',
+                    'primary_metric': w_score, 'metrics': w_metrics,
+                })
+                trained_models['Weighted Ensemble'] = w_ensemble
+    except Exception as e:
+        logger.warning(f"Weighted ensemble failed: {e}")
+    
+    # Model bagging for best model (free accuracy boost)
+    try:
+        best_name = leaderboard[0]['model'] if leaderboard else None
+        if best_name and best_name in trained_models and best_name not in ('Stacked Ensemble', 'Weighted Ensemble'):
+            bagged = _bag_best_model(
+                trained_models[best_name], X_train, y_train, X_test, y_test,
+                problem_type, n_bags=5
+            )
+            if bagged is not None:
+                bag_name = f'Bagged {best_name}'
+                bag_pred = bagged['model'].predict(X_test)
+                if problem_type == 'classification':
+                    bag_score = round(float(accuracy_score(y_test, bag_pred)), 4)
+                    bag_metrics = {'accuracy': bag_score, 'method': f'5-bag bootstrap of {best_name}'}
+                else:
+                    bag_score = round(float(r2_score(y_test, bag_pred)), 4)
+                    bag_metrics = {'r2': bag_score, 'method': f'5-bag bootstrap of {best_name}'}
+                leaderboard.append({
+                    'rank': 0, 'model': bag_name,
+                    'primary_metric': bag_score, 'metrics': bag_metrics,
+                })
+                trained_models[bag_name] = bagged['model']
+    except Exception as e:
+        logger.warning(f"Model bagging failed: {e}")
     
     # Final re-sort after ensemble addition
     leaderboard.sort(key=lambda x: x['primary_metric'], reverse=True)
@@ -641,8 +763,14 @@ def _optuna_tune_inner(model_name, problem_type, param_grid, X_train, y_train,
             best['params'] = params
         return score
 
-    study = optuna.create_study(direction='maximize',
-                                pruner=optuna.pruners.MedianPruner(n_startup_trials=5))
+    study = optuna.create_study(
+        direction='maximize',
+        pruner=optuna.pruners.SuccessiveHalvingPruner(
+            min_resource=1,
+            reduction_factor=3,
+            min_early_stopping_rate=0,
+        )
+    )
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
 
     if best['model'] is not None:
@@ -678,3 +806,196 @@ def _random_tune_fallback(model_name, problem_type, param_grid,
                         float(v) if isinstance(v, (np.floating,)) else v)
                     for k, v in search.best_params_.items()}
     return search.best_estimator_, clean_params, test_score
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Advanced ensemble and bagging utilities
+# ---------------------------------------------------------------------------
+
+class BaggedPredictor:
+    """Wrapper that averages predictions from multiple bootstrap model copies."""
+    
+    def __init__(self, models, problem_type='classification'):
+        self.models = models
+        self.problem_type = problem_type
+    
+    def predict(self, X):
+        preds = np.array([m.predict(X) for m in self.models])
+        if self.problem_type == 'classification':
+            from scipy.stats import mode as scipy_mode
+            result = scipy_mode(preds, axis=0, keepdims=False)
+            return result.mode.flatten()
+        return preds.mean(axis=0)
+    
+    def predict_proba(self, X):
+        probas = []
+        for m in self.models:
+            if hasattr(m, 'predict_proba'):
+                probas.append(m.predict_proba(X))
+        if probas:
+            return np.mean(probas, axis=0)
+        return None
+    
+    @property
+    def feature_importances_(self):
+        importances = [m.feature_importances_ for m in self.models if hasattr(m, 'feature_importances_')]
+        if importances:
+            return np.mean(importances, axis=0)
+        return None
+
+
+class WeightedEnsemble:
+    """Ensemble that blends predictions with optimized weights."""
+    
+    def __init__(self, models, weights, problem_type='classification'):
+        self.models = models
+        self.weights = weights
+        self.problem_type = problem_type
+    
+    def predict(self, X):
+        if self.problem_type == 'classification':
+            # Use weighted probability voting
+            proba = self.predict_proba(X)
+            if proba is not None:
+                return proba.argmax(axis=1)
+            # Fallback: weighted hard vote
+            preds = np.array([m.predict(X) for m in self.models])
+            from scipy.stats import mode as scipy_mode
+            result = scipy_mode(preds, axis=0, keepdims=False)
+            return result.mode.flatten()
+        else:
+            weighted_sum = sum(w * m.predict(X) for w, m in zip(self.weights, self.models))
+            return weighted_sum
+    
+    def predict_proba(self, X):
+        probas = []
+        for m in self.models:
+            if hasattr(m, 'predict_proba'):
+                probas.append(m.predict_proba(X))
+        if probas and len(probas) == len(self.models):
+            return sum(w * p for w, p in zip(self.weights, probas))
+        return None
+
+
+def _bag_best_model(model, X_train, y_train, X_test, y_test, problem_type, n_bags=5):
+    """Train multiple copies of a model on bootstrap samples and bag them.
+    
+    Returns:
+        dict with 'model' (BaggedPredictor) or None if bagging fails.
+    """
+    from sklearn.base import clone
+    
+    bagged_models = []
+    n = len(y_train)
+    
+    for i in range(n_bags):
+        try:
+            m = clone(model)
+            rng = np.random.RandomState(i + 42)
+            idx = rng.choice(n, n, replace=True)
+            if isinstance(X_train, pd.DataFrame):
+                X_boot = X_train.iloc[idx]
+            else:
+                X_boot = X_train[idx]
+            y_boot = y_train.iloc[idx] if hasattr(y_train, 'iloc') else y_train[idx]
+            m.fit(X_boot, y_boot)
+            bagged_models.append(m)
+        except Exception:
+            continue
+    
+    if len(bagged_models) < 2:
+        return None
+    
+    return {'model': BaggedPredictor(bagged_models, problem_type)}
+
+
+def _build_weighted_ensemble(trained_models, top_names, X_test, y_test, problem_type):
+    """Find optimal blending weights for top models using Optuna.
+    
+    Returns:
+        tuple: (WeightedEnsemble, score) or (None, 0)
+    """
+    if not HAS_OPTUNA:
+        return None, 0
+    
+    models_list = [trained_models[n] for n in top_names]
+    
+    # Pre-compute predictions to avoid redundant work
+    model_preds = [m.predict(X_test) for m in models_list]
+    model_probas = []
+    for m in models_list:
+        if hasattr(m, 'predict_proba'):
+            try:
+                model_probas.append(m.predict_proba(X_test))
+            except Exception:
+                model_probas.append(None)
+        else:
+            model_probas.append(None)
+    
+    def objective(trial):
+        weights = [trial.suggest_float(f'w_{i}', 0.01, 1.0) for i in range(len(top_names))]
+        total = sum(weights)
+        weights = [w / total for w in weights]
+        
+        if problem_type == 'classification' and all(p is not None for p in model_probas):
+            blended = sum(w * p for w, p in zip(weights, model_probas))
+            y_pred = blended.argmax(axis=1)
+            return float(accuracy_score(y_test, y_pred))
+        elif problem_type != 'classification':
+            y_pred = sum(w * p for w, p in zip(weights, model_preds))
+            return float(r2_score(y_test, y_pred))
+        else:
+            return -np.inf
+    
+    study = optuna.create_study(direction='maximize')
+    study.optimize(objective, n_trials=50, show_progress_bar=False)
+    
+    best_weights = []
+    for i in range(len(top_names)):
+        best_weights.append(study.best_params[f'w_{i}'])
+    total = sum(best_weights)
+    best_weights = [w / total for w in best_weights]
+    
+    ensemble = WeightedEnsemble(models_list, best_weights, problem_type)
+    best_score = round(float(study.best_value), 4)
+    
+    return ensemble, best_score
+
+
+def multi_seed_evaluate(model, params, X_train, y_train, X_test, y_test,
+                        problem_type='classification', seeds=None):
+    """Evaluate model with multiple random seeds for robust scoring.
+    
+    Returns:
+        dict with 'mean_score', 'std_score', 'scores', 'seeds'
+    """
+    from sklearn.base import clone
+    
+    if seeds is None:
+        seeds = [42, 123, 456, 789, 101]
+    
+    scores = []
+    for seed in seeds:
+        try:
+            m = clone(model)
+            if hasattr(m, 'random_state'):
+                m.set_params(random_state=seed)
+            m.fit(X_train, y_train)
+            y_pred = m.predict(X_test)
+            if problem_type == 'classification':
+                score = float(accuracy_score(y_test, y_pred))
+            else:
+                score = float(r2_score(y_test, y_pred))
+            scores.append(score)
+        except Exception:
+            continue
+    
+    if not scores:
+        return {'mean_score': 0, 'std_score': 0, 'scores': [], 'seeds': seeds}
+    
+    return {
+        'mean_score': round(float(np.mean(scores)), 4),
+        'std_score': round(float(np.std(scores)), 4),
+        'scores': [round(s, 4) for s in scores],
+        'seeds': seeds[:len(scores)],
+    }

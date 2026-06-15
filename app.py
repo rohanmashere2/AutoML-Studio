@@ -471,11 +471,12 @@ def train():
     """Step 3: Train models (ML + Deep Learning)."""
     data = request.json
     session_id = data.get('session_id')
+    time_budget = data.get('time_budget')  # Optional: seconds
     
     if not session_id:
         return jsonify({'error': 'Session ID required'}), 400
     
-    result = pipeline_manager.train(session_id)
+    result = pipeline_manager.train(session_id, time_budget_seconds=time_budget)
     
     if 'error' in result:
         return jsonify(result), 400

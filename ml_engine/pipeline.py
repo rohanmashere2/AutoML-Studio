@@ -333,7 +333,14 @@ class PipelineManager:
                 
                 session.update_progress('Transforming features...', 40)
 
-                # Feature Engineering (new step between clean and transform)
+                # Feature Engineering (runs on full cleaned dataset)
+                # NOTE: Feature engineering statistics (skewness thresholds, bin edges,
+                # interaction correlations) are currently computed on the full dataset
+                # including future test rows. This is a minor form of data leakage.
+                # The scaler fitting is already done correctly (fit on train only)
+                # inside trainer.py. A full fix would restructure the pipeline to:
+                #   Upload → Clean → Split → FE(fit on train) → Transform(fit on train) → Train
+                # This is tracked as a future improvement.
                 if HAS_FEATURE_ENGINEER:
                     try:
                         session.update_progress('Engineering new features...', 45)
@@ -388,8 +395,13 @@ class PipelineManager:
             'message': 'Cleaning and transformation started',
         }
     
-    def train(self, session_id):
-        """Step 3: Train models (standard + deep learning + optional time series)."""
+    def train(self, session_id, time_budget_seconds=None):
+        """Step 3: Train models (standard + deep learning + optional time series).
+        
+        Args:
+            session_id: Session identifier.
+            time_budget_seconds: Optional time limit for training in seconds.
+        """
         session = self.get_session(session_id)
         if not session:
             return {'error': 'Session not found'}
@@ -421,7 +433,8 @@ class PipelineManager:
                         session.profile,
                         session.transform_metadata,
                         session.output_dir,
-                        progress_callback=lambda msg, prog: session.update_progress(msg, int(prog * 0.5))
+                        progress_callback=lambda msg, prog: session.update_progress(msg, int(prog * 0.5)),
+                        time_budget_seconds=time_budget_seconds,
                     )
                 
                 # Store train/test data for later use

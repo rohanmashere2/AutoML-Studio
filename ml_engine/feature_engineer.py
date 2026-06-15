@@ -10,8 +10,11 @@ Steps (executed in order):
     1. DateTime Feature Extraction
     2. Log Transform for Skewed Features
     3. Interaction Features (pairwise products)
-    4. Binning for Continuous Features
-    5. Text Length Features
+    4. Ratio Features (pairwise ratios)
+    5. Frequency Encoding Features
+    6. Cyclical Encoding Features
+    7. Binning for Continuous Features
+    8. Text Length Features
 """
 
 import logging
@@ -60,11 +63,23 @@ def auto_engineer_features(df, profile, target_col=None):
     step = _create_interaction_features(engineered_df, profile, target_col)
     steps.append(step)
 
-    # 4. Binning for Continuous Features
+    # 4. Ratio Features
+    step = _create_ratio_features(engineered_df, profile, target_col)
+    steps.append(step)
+
+    # 5. Frequency Encoding Features
+    step = _create_frequency_features(engineered_df, profile, target_col)
+    steps.append(step)
+
+    # 6. Cyclical Encoding Features
+    step = _create_cyclical_features(engineered_df, profile, target_col)
+    steps.append(step)
+
+    # 7. Binning for Continuous Features
     step = _bin_continuous_features(engineered_df, profile, target_col)
     steps.append(step)
 
-    # 5. Text Length Features
+    # 8. Text Length Features
     step = _text_length_features(engineered_df, profile, target_col)
     steps.append(step)
 
@@ -337,7 +352,168 @@ def _create_interaction_features(df, profile, target_col):
 
 
 # ---------------------------------------------------------------------------
-# Step 4 – Binning for Continuous Features
+# Step 4 – Ratio Features
+# ---------------------------------------------------------------------------
+
+def _create_ratio_features(df, profile, target_col):
+    """Create pairwise ratio features (A / (B + 1e-8)) for top-variance numeric columns."""
+    step_name = "Ratio Features"
+    icon = "➗"
+    features_created = []
+
+    try:
+        numeric_cols, _ = _get_candidate_columns(df, profile, target_col)
+
+        # Skip if too many numeric columns (combinatorial explosion)
+        if len(numeric_cols) > 15:
+            return _make_step(step_name, icon,
+                              "Skipped: >15 numeric columns (too many combinations)",
+                              0, [], False)
+
+        if len(numeric_cols) < 2:
+            return _make_step(step_name, icon,
+                              "Fewer than 2 eligible numeric columns", 0, [], False)
+
+        # Select top-5 numeric columns by variance
+        variances = {}
+        for col in numeric_cols:
+            try:
+                var = df[col].var()
+                if pd.notna(var):
+                    variances[col] = var
+            except Exception:
+                pass
+
+        top_cols = sorted(variances, key=variances.get, reverse=True)[:5]
+
+        if len(top_cols) < 2:
+            return _make_step(step_name, icon,
+                              "Fewer than 2 columns with valid variance", 0, [], False)
+
+        # Generate ratio pairs, cap at 10 new features
+        pairs = list(combinations(top_cols, 2))
+        max_features = 10
+
+        for col_a, col_b in pairs:
+            if len(features_created) >= max_features:
+                break
+            try:
+                feat_name = f"{col_a}_div_{col_b}"
+                df[feat_name] = df[col_a] / (df[col_b] + 1e-8)
+                features_created.append(feat_name)
+            except Exception as inner_exc:
+                logger.warning("Ratio '%s' / '%s' failed: %s",
+                               col_a, col_b, inner_exc)
+
+        count = len(features_created)
+        description = f"Created {count} ratio feature(s) from top-variance columns"
+        return _make_step(step_name, icon, description, count,
+                          features_created, count > 0)
+
+    except Exception as exc:
+        logger.error("Ratio features step failed: %s", exc, exc_info=True)
+        return _make_step(step_name, icon, f"Failed: {exc}", 0, [], False)
+
+
+# ---------------------------------------------------------------------------
+# Step 5 – Frequency Encoding Features
+# ---------------------------------------------------------------------------
+
+def _create_frequency_features(df, profile, target_col):
+    """Add frequency-encoded features for categorical columns with >5 unique values."""
+    step_name = "Frequency Encoding"
+    icon = "📈"
+    features_created = []
+
+    try:
+        _, object_cols = _get_candidate_columns(df, profile, target_col)
+
+        for col in object_cols:
+            try:
+                n_unique = df[col].nunique()
+                if n_unique <= 5:
+                    continue
+
+                feat_name = f"{col}_freq"
+                freq_map = df[col].value_counts() / len(df)
+                df[feat_name] = df[col].map(freq_map).fillna(0).astype(float)
+                features_created.append(feat_name)
+                logger.debug("Frequency feature for '%s' (%d unique values)", col, n_unique)
+            except Exception as inner_exc:
+                logger.warning("Frequency encoding failed for '%s': %s", col, inner_exc)
+
+        count = len(features_created)
+        description = (
+            f"Created {count} frequency-encoded feature(s)"
+            if count
+            else "No categorical columns with >5 unique values"
+        )
+        return _make_step(step_name, icon, description, count,
+                          features_created, count > 0)
+
+    except Exception as exc:
+        logger.error("Frequency encoding step failed: %s", exc, exc_info=True)
+        return _make_step(step_name, icon, f"Failed: {exc}", 0, [], False)
+
+
+# ---------------------------------------------------------------------------
+# Step 6 – Cyclical Encoding Features
+# ---------------------------------------------------------------------------
+
+# Mapping of datetime suffix patterns to their cyclical periods
+_CYCLICAL_PERIODS = {
+    '_month': 12,
+    '_dayofweek': 7,
+    '_day_of_week': 7,
+    '_hour': 24,
+    '_day': 31,
+}
+
+
+def _create_cyclical_features(df, profile, target_col):
+    """Add sin/cos cyclical encoding for datetime-derived columns.
+
+    Detects columns ending in _month, _dayofweek, _day_of_week, _hour, _day
+    and adds corresponding sin and cos features.
+    """
+    step_name = "Cyclical Encoding"
+    icon = "🔄"
+    features_created = []
+
+    try:
+        for col in list(df.columns):
+            if _is_target(col, target_col):
+                continue
+
+            for suffix, period in _CYCLICAL_PERIODS.items():
+                if col.endswith(suffix):
+                    try:
+                        sin_feat = f"{col}_sin"
+                        cos_feat = f"{col}_cos"
+                        df[sin_feat] = np.sin(2 * np.pi * df[col] / period)
+                        df[cos_feat] = np.cos(2 * np.pi * df[col] / period)
+                        features_created.extend([sin_feat, cos_feat])
+                        logger.debug("Cyclical encoding for '%s' (period=%d)", col, period)
+                    except Exception as inner_exc:
+                        logger.warning("Cyclical encoding failed for '%s': %s", col, inner_exc)
+                    break  # Only match the first (most specific) suffix
+
+        count = len(features_created)
+        description = (
+            f"Created {count} cyclical (sin/cos) feature(s)"
+            if count
+            else "No datetime-derived columns detected for cyclical encoding"
+        )
+        return _make_step(step_name, icon, description, count,
+                          features_created, count > 0)
+
+    except Exception as exc:
+        logger.error("Cyclical encoding step failed: %s", exc, exc_info=True)
+        return _make_step(step_name, icon, f"Failed: {exc}", 0, [], False)
+
+
+# ---------------------------------------------------------------------------
+# Step 7 – Binning for Continuous Features
 # ---------------------------------------------------------------------------
 
 def _bin_continuous_features(df, profile, target_col):
@@ -380,7 +556,7 @@ def _bin_continuous_features(df, profile, target_col):
 
 
 # ---------------------------------------------------------------------------
-# Step 5 – Text Length Features
+# Step 8 – Text Length Features
 # ---------------------------------------------------------------------------
 
 def _text_length_features(df, profile, target_col):

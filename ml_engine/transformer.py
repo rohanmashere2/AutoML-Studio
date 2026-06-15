@@ -3,9 +3,13 @@ AutoML Problem Solver - Data Transformer
 Handles encoding, scaling, feature selection, class imbalance, and NLP text processing.
 """
 
+import logging
+
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+
+logger = logging.getLogger(__name__)
 from sklearn.feature_selection import VarianceThreshold
 
 from ml_engine.text_processor import detect_text_columns, process_text_columns
@@ -72,7 +76,7 @@ def transform_dataset(df, profile):
             })
     
     # Step 3: Encode categorical features
-    X, step = _encode_categoricals(X)
+    X, step = _encode_categoricals(X, y=y)
     report['steps'].append(step)
     
     # Step 4: Remove low-variance features
@@ -128,13 +132,32 @@ def transform_dataset(df, profile):
     return transformed_df, report, metadata
 
 
-def _encode_categoricals(X):
-    """Encode categorical features using appropriate strategies."""
+def _encode_categoricals(X, y=None):
+    """Encode categorical features using appropriate strategies.
+    
+    For high-cardinality columns (>10 unique values):
+        - Uses sklearn.preprocessing.TargetEncoder if available (sklearn >= 1.3)
+          and target y is provided.
+        - Falls back to frequency encoding otherwise.
+    
+    Args:
+        X: Feature DataFrame.
+        y: Target series (optional). Used for target encoding of high-cardinality
+           columns. Pass None for unsupervised mode.
+    """
     categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
     encodings = {}
     
     cols_to_drop = []
     new_dfs = []
+
+    # Check if TargetEncoder is available (sklearn >= 1.3)
+    _target_encoder_available = False
+    try:
+        from sklearn.preprocessing import TargetEncoder as _TargetEncoder
+        _target_encoder_available = True
+    except ImportError:
+        _TargetEncoder = None
     
     for col in categorical_cols:
         n_unique = X[col].nunique()
@@ -151,10 +174,31 @@ def _encode_categoricals(X):
             cols_to_drop.append(col)
             encodings[col] = f'one-hot encoded ({n_unique} values → {len(dummies.columns)} features)'
         else:
-            # High cardinality: Frequency encoding
-            freq_map = X[col].value_counts(normalize=True).to_dict()
-            X[col] = X[col].map(freq_map).fillna(0)
-            encodings[col] = f'frequency-encoded ({n_unique} unique values)'
+            # High cardinality: Try target encoding, fall back to frequency
+            if _target_encoder_available and y is not None:
+                try:
+                    te = _TargetEncoder(smooth='auto')
+                    # TargetEncoder expects a 2D array
+                    encoded = te.fit_transform(
+                        X[[col]].astype(str), y
+                    )
+                    X[col] = encoded.ravel()
+                    encodings[col] = f'target-encoded ({n_unique} unique values)'
+                    logger.info("Target-encoded column '%s' (%d unique values)", col, n_unique)
+                except Exception as exc:
+                    logger.warning(
+                        "TargetEncoder failed for '%s', falling back to frequency: %s",
+                        col, exc,
+                    )
+                    # Fall back to frequency encoding
+                    freq_map = X[col].value_counts(normalize=True).to_dict()
+                    X[col] = X[col].map(freq_map).fillna(0)
+                    encodings[col] = f'frequency-encoded ({n_unique} unique values) [target fallback]'
+            else:
+                # Frequency encoding (no target or TargetEncoder unavailable)
+                freq_map = X[col].value_counts(normalize=True).to_dict()
+                X[col] = X[col].map(freq_map).fillna(0)
+                encodings[col] = f'frequency-encoded ({n_unique} unique values)'
     
     if cols_to_drop:
         X = X.drop(columns=cols_to_drop)

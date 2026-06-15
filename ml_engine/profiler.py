@@ -12,6 +12,9 @@ import os
 
 from ml_engine.timeseries_detector import detect_timeseries
 from ml_engine.text_processor import detect_text_columns
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Common target column name patterns
@@ -46,6 +49,58 @@ REGRESSION_KEYWORDS = [
 ]
 
 
+def _optimize_dtypes(df):
+    """
+    Downcast numeric columns to reduce memory usage.
+    
+    - int64 → int32 if values fit within int32 range
+    - float64 → float32 always
+    
+    Returns:
+        tuple: (optimized_df, savings_report)
+            savings_report is a dict with original_mb, optimized_mb, saved_mb, saved_pct, columns_optimized
+    """
+    original_mem = df.memory_usage(deep=True).sum()
+    columns_optimized = []
+
+    for col in df.columns:
+        col_dtype = df[col].dtype
+
+        if col_dtype == np.int64:
+            col_min = df[col].min()
+            col_max = df[col].max()
+            # int32 range: -2_147_483_648 to 2_147_483_647
+            if col_min >= np.iinfo(np.int32).min and col_max <= np.iinfo(np.int32).max:
+                df[col] = df[col].astype(np.int32)
+                columns_optimized.append((col, 'int64 → int32'))
+
+        elif col_dtype == np.float64:
+            df[col] = df[col].astype(np.float32)
+            columns_optimized.append((col, 'float64 → float32'))
+
+    optimized_mem = df.memory_usage(deep=True).sum()
+    saved = original_mem - optimized_mem
+    saved_pct = round(saved / original_mem * 100, 2) if original_mem > 0 else 0.0
+
+    savings_report = {
+        'original_mb': round(original_mem / 1024 / 1024, 4),
+        'optimized_mb': round(optimized_mem / 1024 / 1024, 4),
+        'saved_mb': round(saved / 1024 / 1024, 4),
+        'saved_pct': saved_pct,
+        'columns_optimized': columns_optimized,
+    }
+
+    if columns_optimized:
+        logger.info(
+            "Dtype optimization: %.4f MB → %.4f MB (saved %.2f%%)",
+            savings_report['original_mb'],
+            savings_report['optimized_mb'],
+            saved_pct,
+        )
+
+    return df, savings_report
+
+
 def read_dataset(filepath):
     """
     Read a dataset file, supporting multiple formats.
@@ -75,6 +130,9 @@ def read_dataset(filepath):
         # Default: try CSV
         df = pd.read_csv(filepath)
     
+    # Optimize dtypes to reduce memory usage
+    df, _ = _optimize_dtypes(df)
+    
     return df
 
 
@@ -88,6 +146,9 @@ def profile_dataset(filepath, problem_statement=""):
     """
     # Read the dataset (multi-format support)
     df = read_dataset(filepath)
+    
+    # Dtype optimization report (optimization already applied in read_dataset)
+    _, memory_savings = _optimize_dtypes(df)  # re-run is a no-op, just get report shape
     
     # Basic stats
     n_rows, n_cols = df.shape
@@ -171,6 +232,8 @@ def profile_dataset(filepath, problem_statement=""):
         # New: Text columns
         'text_columns': text_columns,
         'has_text_columns': len(text_columns) > 0,
+        # New: Memory optimization info
+        'memory_optimization': memory_savings,
     }
     
     return profile

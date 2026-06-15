@@ -577,3 +577,207 @@ def _serialize_params(params):
         else:
             out[k] = v
     return out
+
+
+# ── Multi-Objective Optimization ─────────────────────────────
+
+def multi_objective_search(model_name, problem_type, X_train, y_train,
+                           X_test, y_test, objectives=None, n_trials=100):
+    """
+    Multi-objective hyperparameter optimization using Optuna.
+    
+    Supports optimizing for multiple competing objectives simultaneously
+    and returns the Pareto front of non-dominated solutions.
+    
+    Args:
+        model_name: Name of the model to optimize.
+        problem_type: 'classification' or 'regression'.
+        X_train, y_train: Training data.
+        X_test, y_test: Test data.
+        objectives: List of objective names. Supported:
+            - 'accuracy' (maximize) or 'r2' (maximize)
+            - 'inference_speed' (minimize — milliseconds per 100 samples)
+            - 'model_size' (minimize — number of parameters/estimators)
+        n_trials: Number of Optuna trials.
+    
+    Returns:
+        dict with 'pareto_front' (list of solutions), 'n_trials', 'objectives'.
+    """
+    if not HAS_OPTUNA:
+        return {'error': 'Optuna not available', 'pareto_front': []}
+    
+    if objectives is None:
+        objectives = ['accuracy', 'inference_speed'] if problem_type == 'classification' else ['r2', 'inference_speed']
+    
+    # Map objective names to directions
+    direction_map = {
+        'accuracy': 'maximize', 'r2': 'maximize',
+        'f1': 'maximize', 'precision': 'maximize', 'recall': 'maximize',
+        'inference_speed': 'minimize', 'model_size': 'minimize',
+        'training_time': 'minimize',
+    }
+    directions = [direction_map.get(obj, 'maximize') for obj in objectives]
+    
+    # Build search space for the model
+    search_space = _build_dynamic_search_space(model_name, X_train, y_train)
+    canonical = _canonical_model_name(model_name)
+    
+    if canonical not in search_space:
+        return {'error': f'No search space for {model_name}', 'pareto_front': []}
+    
+    space = search_space[canonical]
+    
+    def objective(trial):
+        # Sample hyperparameters
+        params = {}
+        for param_name, param_range in space.items():
+            if isinstance(param_range, tuple) and len(param_range) == 2:
+                low, high = param_range
+                if isinstance(low, int) and isinstance(high, int):
+                    params[param_name] = trial.suggest_int(param_name, low, high)
+                elif isinstance(low, float) or isinstance(high, float):
+                    params[param_name] = trial.suggest_float(param_name, float(low), float(high))
+                else:
+                    params[param_name] = trial.suggest_categorical(param_name, list(param_range))
+            elif isinstance(param_range, list):
+                params[param_name] = trial.suggest_categorical(param_name, param_range)
+        
+        # Build and train model
+        try:
+            model = _build_model_instance(canonical, problem_type, params)
+            
+            train_start = time.time()
+            model.fit(X_train, y_train)
+            train_time = time.time() - train_start
+            
+            # Compute objectives
+            scores = []
+            for obj in objectives:
+                if obj in ('accuracy', 'f1', 'precision', 'recall'):
+                    from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+                    y_pred = model.predict(X_test)
+                    if obj == 'accuracy':
+                        scores.append(float(accuracy_score(y_test, y_pred)))
+                    elif obj == 'f1':
+                        scores.append(float(f1_score(y_test, y_pred, average='weighted', zero_division=0)))
+                    elif obj == 'precision':
+                        scores.append(float(precision_score(y_test, y_pred, average='weighted', zero_division=0)))
+                    elif obj == 'recall':
+                        scores.append(float(recall_score(y_test, y_pred, average='weighted', zero_division=0)))
+                elif obj == 'r2':
+                    from sklearn.metrics import r2_score
+                    y_pred = model.predict(X_test)
+                    scores.append(float(r2_score(y_test, y_pred)))
+                elif obj == 'inference_speed':
+                    # Milliseconds per 100 samples
+                    import timeit
+                    sample = X_test[:100] if len(X_test) >= 100 else X_test
+                    t = timeit.timeit(lambda: model.predict(sample), number=5) / 5 * 1000
+                    scores.append(t)
+                elif obj == 'model_size':
+                    # Rough proxy: number of estimators or parameters
+                    size = _estimate_model_size(model)
+                    scores.append(size)
+                elif obj == 'training_time':
+                    scores.append(train_time)
+            
+            return tuple(scores)
+        except Exception:
+            # Return worst values for failed trials
+            return tuple(
+                float('-inf') if d == 'maximize' else float('inf')
+                for d in directions
+            )
+    
+    study = optuna.create_study(directions=directions)
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+    
+    # Extract Pareto front
+    pareto_front = []
+    for trial in study.best_trials:
+        solution = {
+            'params': _serialize_params(trial.params),
+            'values': {obj: round(float(v), 6) for obj, v in zip(objectives, trial.values)},
+            'trial_number': trial.number,
+        }
+        pareto_front.append(solution)
+    
+    # Sort by first objective
+    pareto_front.sort(key=lambda x: x['values'][objectives[0]], reverse=(directions[0] == 'maximize'))
+    
+    return {
+        'pareto_front': pareto_front,
+        'n_trials': n_trials,
+        'n_pareto_solutions': len(pareto_front),
+        'objectives': objectives,
+        'directions': directions,
+    }
+
+
+def _estimate_model_size(model):
+    """Estimate model complexity/size as a scalar."""
+    if hasattr(model, 'n_estimators'):
+        base = model.n_estimators
+        if hasattr(model, 'max_depth') and model.max_depth:
+            return base * model.max_depth
+        return base
+    if hasattr(model, 'coef_'):
+        return int(np.count_nonzero(model.coef_))
+    if hasattr(model, 'support_vectors_'):
+        return len(model.support_vectors_)
+    return 100  # Default fallback
+
+
+def _build_model_instance(canonical_name, problem_type, params):
+    """Create a model instance from canonical name and params."""
+    model_map_clf = {
+        'RandomForest': RandomForestClassifier,
+        'GradientBoosting': GradientBoostingClassifier,
+        'ExtraTrees': ExtraTreesClassifier,
+        'AdaBoost': AdaBoostClassifier,
+        'LogisticRegression': LogisticRegression,
+        'KNeighbors': KNeighborsClassifier,
+        'DecisionTree': DecisionTreeClassifier,
+        'SVM': SVC,
+    }
+    model_map_reg = {
+        'RandomForest': RandomForestRegressor,
+        'GradientBoosting': GradientBoostingRegressor,
+        'ExtraTrees': ExtraTreesRegressor,
+        'AdaBoost': AdaBoostRegressor,
+        'Ridge': Ridge,
+        'Lasso': Lasso,
+        'KNeighbors': KNeighborsRegressor,
+        'DecisionTree': DecisionTreeRegressor,
+        'SVM': SVR,
+    }
+    
+    # Add optional models
+    if HAS_XGB:
+        model_map_clf['XGBoost'] = XGBClassifier
+        model_map_reg['XGBoost'] = XGBRegressor
+    if HAS_LGB:
+        model_map_clf['LightGBM'] = LGBMClassifier
+        model_map_reg['LightGBM'] = LGBMRegressor
+    
+    model_map = model_map_clf if problem_type == 'classification' else model_map_reg
+    cls = model_map.get(canonical_name)
+    
+    if cls is None:
+        raise ValueError(f"Unknown model: {canonical_name}")
+    
+    # Filter params to only those the model accepts
+    import inspect
+    valid_params = set(inspect.signature(cls.__init__).parameters.keys()) - {'self'}
+    filtered = {k: v for k, v in params.items() if k in valid_params}
+    
+    # Add defaults
+    if 'random_state' in valid_params:
+        filtered.setdefault('random_state', 42)
+    if canonical_name == 'XGBoost':
+        filtered.setdefault('verbosity', 0)
+    if canonical_name == 'LightGBM':
+        filtered.setdefault('verbose', -1)
+    
+    return cls(**filtered)
+

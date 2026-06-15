@@ -50,6 +50,44 @@ class AutoMLChatAgent:
     # Class-level shared local pipeline (persists across instances to save RAM)
     _shared_pipeline = None
 
+    # Pipeline actions the LLM can trigger (class-level constant)
+    PIPELINE_TOOLS = {
+        'run_eda': {
+            'description': 'Run automated exploratory data analysis on the dataset',
+            'requires': ['session_id'],
+        },
+        'start_training': {
+            'description': 'Train ML models on the dataset. Optional param: time_budget (seconds)',
+            'requires': ['session_id'],
+            'optional': ['time_budget'],
+        },
+        'explain_model': {
+            'description': 'Generate SHAP explanations and feature importance for the best model',
+            'requires': ['session_id'],
+        },
+        'check_drift': {
+            'description': 'Check for data drift between training and new data',
+            'requires': ['session_id'],
+        },
+        'set_target': {
+            'description': 'Set or change the target column for prediction',
+            'requires': ['session_id', 'column_name'],
+        },
+        'run_diagnostics': {
+            'description': 'Run model diagnostics (overfitting, residuals, learning curves)',
+            'requires': ['session_id'],
+        },
+        'detect_label_errors': {
+            'description': 'Use confident learning to detect potentially mislabeled training samples',
+            'requires': ['session_id'],
+        },
+        'optimize_hyperparams': {
+            'description': 'Run advanced hyperparameter optimization on trained models',
+            'requires': ['session_id'],
+            'optional': ['method', 'n_trials'],
+        },
+    }
+
     def __init__(self, pipeline_manager=None):
         self.pm = pipeline_manager
         self.conversations = {}  # session_id -> ConversationMemory
@@ -211,13 +249,20 @@ class AutoMLChatAgent:
 
         memory.add_assistant_message(response['text'])
 
-        return {
+        result = {
             'intent': response.get('intent', self.llm_provider),
             'response': response['text'],
             'data': response.get('data'),
             'chart': response.get('chart'),
             'powered_by': self.llm_provider,
         }
+
+        # Check if the LLM suggested a pipeline action
+        suggested = response.get('suggested_action') or self._parse_suggested_action(response['text'])
+        if suggested:
+            result['suggested_action'] = suggested
+
+        return result
 
     # ── Gemini Chat ──────────────────────────────────────────
 
@@ -337,6 +382,12 @@ class AutoMLChatAgent:
             "- Use emojis sparingly for section headers.\n"
             "- When suggesting actions, be specific: name the exact feature, threshold, or setting.\n"
             "- You can reference previous messages in the conversation.\n\n"
+            "PIPELINE ACTIONS:\n"
+            "You can suggest pipeline actions by including a JSON block in your response like:\n"
+            '```action\n{"action": "start_training", "params": {"time_budget": 300}}\n```\n'
+            "Available actions: " + ", ".join(self.PIPELINE_TOOLS.keys()) + "\n"
+            "Only suggest an action when the user explicitly asks to DO something (train, analyze, explain).\n"
+            "Do NOT suggest actions when they're just asking questions.\n\n"
         )
 
         if not session_data:
@@ -477,6 +528,50 @@ class AutoMLChatAgent:
                     lines.append(f"  • {c1} ↔ {c2}: {val:.3f}")
 
         return "\n".join(lines)
+
+    # ── Action Parsing ───────────────────────────────────────
+
+    def _parse_suggested_action(self, response_text):
+        """Extract a pipeline action from the LLM response text.
+        
+        Looks for JSON blocks wrapped in ```action ... ``` or inline
+        {"action": "..."} patterns.
+        
+        Returns:
+            dict with 'action' and 'params' keys, or None if no action found.
+        """
+        if not response_text:
+            return None
+        
+        # Try ```action block first
+        action_pattern = r'```action\s*\n?\s*(\{.*?\})\s*\n?\s*```'
+        match = re.search(action_pattern, response_text, re.DOTALL)
+        if match:
+            try:
+                action_data = json.loads(match.group(1))
+                if 'action' in action_data and action_data['action'] in self.PIPELINE_TOOLS:
+                    return {
+                        'action': action_data['action'],
+                        'params': action_data.get('params', {}),
+                    }
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # Try inline JSON pattern
+        inline_pattern = r'\{"action"\s*:\s*"(\w+)"(?:\s*,\s*"params"\s*:\s*(\{[^}]*\}))?\}'
+        match = re.search(inline_pattern, response_text)
+        if match:
+            action_name = match.group(1)
+            if action_name in self.PIPELINE_TOOLS:
+                params = {}
+                if match.group(2):
+                    try:
+                        params = json.loads(match.group(2))
+                    except json.JSONDecodeError:
+                        pass
+                return {'action': action_name, 'params': params}
+        
+        return None
 
     # ── Rule-Based Fallback Handlers ─────────────────────────
 
