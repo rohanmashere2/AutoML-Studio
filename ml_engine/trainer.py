@@ -37,6 +37,7 @@ from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegress
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 from sklearn.ensemble import AdaBoostClassifier, AdaBoostRegressor
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVC, SVR
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
@@ -185,11 +186,12 @@ def _detect_gpu():
 HAS_GPU = _detect_gpu()
 
 
-def get_models(problem_type, class_weight_balanced=False, n_samples=None):
+def get_models(problem_type, mode='balanced', class_weight_balanced=False, n_samples=None):
     """Get an OrderedDict of model_name -> model_instance, ordered fast-first.
     
     Args:
         problem_type: 'classification' or 'regression'
+        mode: 'quick' (3 models), 'balanced' (7 models), 'full' (14+ models)
         class_weight_balanced: Use balanced class weights for supported models
         n_samples: Number of training samples (used to skip slow models on large data)
     """
@@ -198,59 +200,219 @@ def get_models(problem_type, class_weight_balanced=False, n_samples=None):
     lgbm_extra = {'device': 'gpu'} if HAS_GPU else {}
 
     if problem_type == 'classification':
-        # Ordered: fast baselines → medium ensembles → slow boosters → very slow
-        models = OrderedDict([
-            ('Logistic Regression', LogisticRegression(max_iter=1000, random_state=42)),
-            ('Naive Bayes', GaussianNB()),
-            ('KNN', KNeighborsClassifier()),
-            ('AdaBoost', AdaBoostClassifier(n_estimators=100, random_state=42)),
-            ('HistGBM', HistGradientBoostingClassifier(max_iter=100, random_state=42)),
-            ('Random Forest', RandomForestClassifier(n_estimators=100, random_state=42)),
-            ('Extra Trees', ExtraTreesClassifier(n_estimators=100, random_state=42)),
-            ('Gradient Boosting', GradientBoostingClassifier(n_estimators=100, random_state=42)),
-        ])
-        if class_weight_balanced:
-            models['Logistic Regression'] = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
-            models['Random Forest'] = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
-        
-        if HAS_LGBM:
-            models['LightGBM'] = LGBMClassifier(n_estimators=100, random_state=42, verbose=-1, **lgbm_extra)
+        models = OrderedDict()
+
+        # --- Quick models (always included) ---
+        models['Logistic Regression'] = LogisticRegression(max_iter=1000, random_state=42)
         if HAS_XGB:
             models['XGBoost'] = XGBClassifier(n_estimators=100, random_state=42, verbosity=0, **xgb_extra)
-        if HAS_CATBOOST:
-            models['CatBoost'] = CatBoostClassifier(iterations=100, random_state=42, verbose=0)
-        
-        # Skip SVM on large datasets (O(n²) complexity)
-        if n_samples is None or n_samples <= 10000:
-            if class_weight_balanced:
-                models['SVM'] = SVC(probability=True, random_state=42, max_iter=5000, class_weight='balanced')
-            else:
-                models['SVM'] = SVC(probability=True, random_state=42, max_iter=5000)
-    else:
-        models = OrderedDict([
-            ('Linear Regression', LinearRegression()),
-            ('Ridge', Ridge(random_state=42)),
-            ('Lasso', Lasso(random_state=42)),
-            ('ElasticNet', ElasticNet(random_state=42)),
-            ('KNN', KNeighborsRegressor()),
-            ('AdaBoost', AdaBoostRegressor(n_estimators=100, random_state=42)),
-            ('HistGBM', HistGradientBoostingRegressor(max_iter=100, random_state=42)),
-            ('Random Forest', RandomForestRegressor(n_estimators=100, random_state=42)),
-            ('Extra Trees', ExtraTreesRegressor(n_estimators=100, random_state=42)),
-            ('Gradient Boosting', GradientBoostingRegressor(n_estimators=100, random_state=42)),
-        ])
         if HAS_LGBM:
-            models['LightGBM'] = LGBMRegressor(n_estimators=100, random_state=42, verbose=-1, **lgbm_extra)
+            models['LightGBM'] = LGBMClassifier(n_estimators=100, random_state=42, verbose=-1, **lgbm_extra)
+
+        # --- Balanced adds these ---
+        if mode in ('balanced', 'full'):
+            models['Decision Tree'] = DecisionTreeClassifier(max_depth=10, random_state=42)
+            models['Random Forest'] = RandomForestClassifier(n_estimators=100, random_state=42)
+            models['HistGBM'] = HistGradientBoostingClassifier(max_iter=100, random_state=42)
+            if HAS_CATBOOST:
+                models['CatBoost'] = CatBoostClassifier(iterations=100, random_state=42, verbose=0)
+
+        # --- Full adds these ---
+        if mode == 'full':
+            models['Naive Bayes'] = GaussianNB()
+            models['KNN'] = KNeighborsClassifier()
+            models['AdaBoost'] = AdaBoostClassifier(n_estimators=100, random_state=42)
+            models['Extra Trees'] = ExtraTreesClassifier(n_estimators=100, random_state=42)
+            models['Gradient Boosting'] = GradientBoostingClassifier(n_estimators=100, random_state=42)
+            # Skip SVM on large datasets (O(n²) complexity)
+            if n_samples is None or n_samples <= 10000:
+                if class_weight_balanced:
+                    models['SVM'] = SVC(probability=True, random_state=42, max_iter=5000, class_weight='balanced')
+                else:
+                    models['SVM'] = SVC(probability=True, random_state=42, max_iter=5000)
+
+        # Apply balanced class weights where supported
+        if class_weight_balanced:
+            models['Logistic Regression'] = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced')
+            if 'Random Forest' in models:
+                models['Random Forest'] = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
+    else:
+        models = OrderedDict()
+
+        # --- Quick models (always included) ---
+        models['Ridge'] = Ridge(random_state=42)
         if HAS_XGB:
             models['XGBoost'] = XGBRegressor(n_estimators=100, random_state=42, verbosity=0, **xgb_extra)
-        if HAS_CATBOOST:
-            models['CatBoost'] = CatBoostRegressor(iterations=100, random_state=42, verbose=0)
-        
-        # Skip SVR on large datasets
-        if n_samples is None or n_samples <= 10000:
-            models['SVR'] = SVR()
+        if HAS_LGBM:
+            models['LightGBM'] = LGBMRegressor(n_estimators=100, random_state=42, verbose=-1, **lgbm_extra)
+
+        # --- Balanced adds these ---
+        if mode in ('balanced', 'full'):
+            models['Decision Tree'] = DecisionTreeRegressor(random_state=42)
+            models['Random Forest'] = RandomForestRegressor(n_estimators=100, random_state=42)
+            models['HistGBM'] = HistGradientBoostingRegressor(max_iter=100, random_state=42)
+            if HAS_CATBOOST:
+                models['CatBoost'] = CatBoostRegressor(iterations=100, random_state=42, verbose=0)
+
+        # --- Full adds these ---
+        if mode == 'full':
+            models['Linear Regression'] = LinearRegression()
+            models['Lasso'] = Lasso(random_state=42)
+            models['ElasticNet'] = ElasticNet(random_state=42)
+            models['KNN'] = KNeighborsRegressor()
+            models['AdaBoost'] = AdaBoostRegressor(n_estimators=100, random_state=42)
+            models['Extra Trees'] = ExtraTreesRegressor(n_estimators=100, random_state=42)
+            models['Gradient Boosting'] = GradientBoostingRegressor(n_estimators=100, random_state=42)
+            # Skip SVR on large datasets
+            if n_samples is None or n_samples <= 10000:
+                models['SVR'] = SVR()
     
     return models
+
+
+def _estimate_training_time(model_name, n_samples, n_features):
+    """Estimate training time in seconds based on model complexity heuristics.
+    
+    Args:
+        model_name: Name of the model
+        n_samples: Number of training samples
+        n_features: Number of features
+    
+    Returns:
+        float: Estimated training time in seconds
+    """
+    complexities = {
+        'Logistic Regression': n_samples * n_features * 1e-7,
+        'Ridge': n_samples * n_features * 1e-7,
+        'Decision Tree': n_samples * n_features * 5e-7,
+        'Random Forest': n_samples * n_features * 100 * 1e-7,
+        'HistGBM': n_samples * n_features * 50 * 1e-7,
+        'XGBoost': n_samples * n_features * 100 * 1e-7,
+        'LightGBM': n_samples * n_features * 80 * 1e-7,
+        'CatBoost': n_samples * n_features * 200 * 1e-7,
+        'Gradient Boosting': n_samples * n_features * 150 * 1e-7,
+        'SVM': (n_samples ** 2) * n_features * 1e-9,
+        'KNN': n_samples * n_features * 1e-6,
+        'Naive Bayes': n_samples * n_features * 1e-8,
+        'AdaBoost': n_samples * n_features * 100 * 1e-7,
+        'Extra Trees': n_samples * n_features * 100 * 1e-7,
+    }
+    return complexities.get(model_name, n_samples * n_features * 1e-6)
+
+
+def _subsample_qualify(models, X_train, y_train, problem_type, top_k=5):
+    """Run quick CV on a subsample to identify the most promising models.
+    
+    Only activated when len(X_train) > 5000. Trains each model on a small
+    stratified subsample with 3-fold CV and returns the top_k model names.
+    
+    Args:
+        models: dict of model_name -> model_instance
+        X_train: Training features
+        y_train: Training target
+        problem_type: 'classification' or 'regression'
+        top_k: Number of top models to keep
+    
+    Returns:
+        list: Top model names sorted by subsample CV score
+    """
+    n = len(X_train)
+    sub_size = min(max(500, n // 10), 5000)
+    
+    scoring = 'accuracy' if problem_type == 'classification' else 'r2'
+    
+    # Create stratified subsample
+    try:
+        if problem_type == 'classification':
+            _, X_sub, _, y_sub = train_test_split(
+                X_train, y_train, test_size=sub_size / n,
+                random_state=42, stratify=y_train
+            )
+        else:
+            _, X_sub, _, y_sub = train_test_split(
+                X_train, y_train, test_size=sub_size / n,
+                random_state=42
+            )
+    except ValueError:
+        # Stratification can fail with very few samples per class
+        _, X_sub, _, y_sub = train_test_split(
+            X_train, y_train, test_size=sub_size / n, random_state=42
+        )
+    
+    if problem_type == 'classification':
+        cv_sub = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    else:
+        cv_sub = KFold(n_splits=3, shuffle=True, random_state=42)
+    
+    scores = {}
+    for name, model in models.items():
+        try:
+            from sklearn.base import clone
+            m = clone(model)
+            cv_scores = cross_val_score(m, X_sub, y_sub, cv=cv_sub, scoring=scoring)
+            scores[name] = float(cv_scores.mean())
+        except Exception as e:
+            logger.warning(f"Subsample qualification: {name} failed: {e}")
+            scores[name] = -999
+    
+    # Sort by score descending, return top_k names
+    sorted_names = sorted(scores, key=scores.get, reverse=True)
+    qualified = sorted_names[:top_k]
+    skipped = sorted_names[top_k:]
+    if skipped:
+        logger.info(f"Subsample qualification: keeping {qualified}, skipping {skipped}")
+    return qualified
+
+
+def _early_abandon_cv(model, X, y, cv, scoring, best_score_so_far=None):
+    """Run cross-validation with early abandonment.
+    
+    Runs CV folds one at a time. After each fold, if the running mean score
+    drops below best_score_so_far * 0.7, the remaining folds are abandoned.
+    
+    Args:
+        model: sklearn-compatible model instance
+        X: Features
+        y: Target
+        cv: CV splitter object
+        scoring: Scoring metric name (e.g. 'accuracy', 'r2')
+        best_score_so_far: Current best score to compare against (or None)
+    
+    Returns:
+        tuple: (mean_score, was_abandoned)
+    """
+    from sklearn.base import clone
+    from sklearn.metrics import get_scorer
+    
+    scorer = get_scorer(scoring)
+    fold_scores = []
+    was_abandoned = False
+    
+    for train_idx, val_idx in cv.split(X, y):
+        if isinstance(X, pd.DataFrame):
+            X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
+        else:
+            X_fold_train, X_fold_val = X[train_idx], X[val_idx]
+        
+        if hasattr(y, 'iloc'):
+            y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
+        else:
+            y_fold_train, y_fold_val = y[train_idx], y[val_idx]
+        
+        fold_model = clone(model)
+        fold_model.fit(X_fold_train, y_fold_train)
+        fold_score = scorer(fold_model, X_fold_val, y_fold_val)
+        fold_scores.append(fold_score)
+        
+        # Check for early abandonment after at least one fold
+        if best_score_so_far is not None and len(fold_scores) >= 1:
+            running_mean = np.mean(fold_scores)
+            if running_mean < best_score_so_far * 0.7:
+                was_abandoned = True
+                break
+    
+    mean_score = float(np.mean(fold_scores))
+    return mean_score, was_abandoned
 
 
 def _validate_training_data(X, y, problem_type):
@@ -272,7 +434,7 @@ def _validate_training_data(X, y, problem_type):
     return errors
 
 
-def train_models(df, profile, transform_metadata, output_dir, progress_callback=None, time_budget_seconds=None):
+def train_models(df, profile, transform_metadata, output_dir, progress_callback=None, time_budget_seconds=None, mode='balanced'):
     """
     Train all models, cross-validate, tune top models, and return results.
     
@@ -343,7 +505,13 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
     X_test.columns = [str(c) for c in X_test.columns]
     
     # Get models (pass n_samples to skip slow models on large datasets)
-    models = get_models(problem_type, n_samples=len(X_train))
+    models = get_models(problem_type, mode=mode, n_samples=len(X_train))
+    
+    # Subsample qualification: pre-screen models on large datasets
+    if len(X_train) > 5000:
+        qualified_names = _subsample_qualify(models, X_train, y_train, problem_type, top_k=5)
+        models = OrderedDict((k, v) for k, v in models.items() if k in qualified_names)
+        logger.info(f"After subsample qualification: {list(models.keys())}")
     
     # Time budget tracking
     training_start_time = time.time()
@@ -369,6 +537,10 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
     else:
         cv_strategy = KFold(n_splits=n_folds, shuffle=True, random_state=42)
     
+    # Track the best CV score so far for early abandonment
+    best_cv_score_so_far = None
+    n_features = X_train.shape[1]
+    
     for idx, (name, model) in enumerate(models.items()):
         # Check time budget before each model
         if time_budget_seconds is not None:
@@ -377,6 +549,12 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
             if remaining < 30:
                 logger.info(f"Time budget exhausted after {idx}/{total_models} models ({elapsed:.0f}s). Skipping remaining.")
                 break
+            
+            # Model time estimator: skip models that would use too much budget
+            est_time = _estimate_training_time(name, n_samples, n_features)
+            if est_time > remaining * 0.8:
+                logger.warning(f"Skipping {name}: estimated {est_time:.1f}s exceeds 80% of remaining budget ({remaining:.1f}s)")
+                continue
         
         if progress_callback:
             progress_callback(f'Training {name}...', int((idx / total_models) * 100))
@@ -387,12 +565,12 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
             if name in ('XGBoost', 'LightGBM'):
                 try:
                     # Step 1: Plain fit (should always work)
-                    plain_model = get_models(problem_type).get(name)
+                    plain_model = get_models(problem_type, mode=mode).get(name)
                     plain_model.fit(X_train, y_train)
                     model = plain_model
                     # Step 2: Try early stopping as an upgrade
                     try:
-                        es_model = get_models(problem_type).get(name)
+                        es_model = get_models(problem_type, mode=mode).get(name)
                         es_model.set_params(early_stopping_rounds=20)
                         es_model.fit(X_train, y_train,
                                      eval_set=[(X_test, y_test)],
@@ -410,7 +588,7 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
                               early_stopping_rounds=20,
                               verbose=False)
                 except Exception:
-                    model = get_models(problem_type).get(name)
+                    model = get_models(problem_type, mode=mode).get(name)
                     model.fit(X_train, y_train)
             else:
                 model.fit(X_train, y_train)
@@ -420,13 +598,23 @@ def train_models(df, profile, transform_metadata, output_dir, progress_callback=
             y_train_pred = model.predict(X_train)
             y_test_pred = model.predict(X_test)
             
-            # Cross-validation
+            # Cross-validation with early abandonment
             scoring = 'accuracy' if problem_type == 'classification' else 'r2'
-            cv_scores = cross_val_score(model, X_train, y_train, cv=cv_strategy, scoring=scoring)
+            cv_mean, was_abandoned = _early_abandon_cv(
+                model, X_train, y_train, cv_strategy, scoring,
+                best_score_so_far=best_cv_score_so_far
+            )
+            if was_abandoned:
+                logger.info(f"Early abandoned CV for {name} (score {cv_mean:.4f} << best {best_cv_score_so_far:.4f})")
+            
+            # Update best CV score tracker
+            if best_cv_score_so_far is None or cv_mean > best_cv_score_so_far:
+                best_cv_score_so_far = cv_mean
+            
             cv_results[name] = {
-                'mean': round(float(cv_scores.mean()), 4),
-                'std': round(float(cv_scores.std()), 4),
-                'scores': [round(float(s), 4) for s in cv_scores],
+                'mean': round(float(cv_mean), 4),
+                'std': 0.0,  # std not available from early-abandon single-pass
+                'abandoned': was_abandoned,
             }
             
             # Compute metrics

@@ -59,6 +59,7 @@ from ml_engine.pipeline_builder import PipelineDAG
 # New Studio imports
 from ml_engine.hyperopt_engine import auto_optimize
 from ml_engine.cleaning_advisor import generate_cleaning_suggestions, apply_suggestions
+from ml_engine.pipeline_cache import PipelineCache
 # Project storage: B2 cloud first, local fallback
 try:
     from ml_engine.b2_project_storage import save_project as _save_project, load_project as _load_project, list_projects as _list_projects, delete_project as _delete_project
@@ -137,6 +138,9 @@ class PipelineSession:
         # Dataset versioning / checkpoints
         self._checkpoints = {}  # label -> (df_copy, metadata)
         
+        # Phase 7: Pipeline timing instrumentation
+        self.timing = {}  # step_name -> seconds
+        
         # File paths
         self.upload_path = None
         self.output_dir = None
@@ -205,6 +209,12 @@ class PipelineManager:
         
         # Initialize experiment store
         self.experiment_store = ExperimentStore()
+        
+        # Pipeline cache for skipping redundant computation
+        self._cache = PipelineCache(
+            cache_dir=os.path.join(output_dir, '.cache'),
+            max_entries=10,
+        )
         
         # Multi-dataset management
         self.datasets = {}  # dataset_id -> {name, path, profile, uploaded_at}
@@ -309,11 +319,43 @@ class PipelineManager:
         
         def _run():
             try:
-                # Clean
+                import time as _time
+                
+                # ── Check pipeline cache ──────────────────────
+                cache_config = {
+                    'target': session.profile.get('target_column'),
+                    'problem_type': session.profile.get('problem_type'),
+                    'is_timeseries': session.is_timeseries,
+                }
+                cache_fp = self._cache.fingerprint(session.original_df, cache_config)
+                
+                cached_transform = self._cache.get(cache_fp, 'transform')
+                if cached_transform and 'df' in cached_transform:
+                    session.update_progress('Loading from cache...', 50)
+                    session.transformed_df = cached_transform['df']
+                    session.transform_report = cached_transform.get('report', {})
+                    session.transform_metadata = cached_transform.get('report', {}).get('metadata', {})
+                    # Also try to load clean report from cache
+                    cached_clean = self._cache.get(cache_fp, 'clean')
+                    if cached_clean:
+                        session.cleaned_df = cached_clean.get('df')
+                        session.clean_report = cached_clean.get('report', {})
+                    session.timing['clean_transform'] = 0.0
+                    session.timing['cache_hit'] = True
+                    session.update_progress('Loaded from cache!', 100)
+                    session.status = 'complete'
+                    session.current_step = 'train'
+                    return
+                
+                step_start = _time.time()
+                
+                # ── Clean ─────────────────────────────────────
+                clean_start = _time.time()
                 session.update_progress('Removing duplicates...', 10)
                 session.cleaned_df, session.clean_report = clean_dataset(
                     session.original_df.copy(), session.profile
                 )
+                session.timing['clean'] = round(_time.time() - clean_start, 3)
                 
                 # Handle time series data
                 if session.is_timeseries:
@@ -333,40 +375,70 @@ class PipelineManager:
                 
                 session.update_progress('Transforming features...', 40)
 
-                # Feature Engineering (runs on full cleaned dataset)
-                # NOTE: Feature engineering statistics (skewness thresholds, bin edges,
-                # interaction correlations) are currently computed on the full dataset
-                # including future test rows. This is a minor form of data leakage.
-                # The scaler fitting is already done correctly (fit on train only)
-                # inside trainer.py. A full fix would restructure the pipeline to:
-                #   Upload → Clean → Split → FE(fit on train) → Transform(fit on train) → Train
-                # This is tracked as a future improvement.
+                # ── Feature Engineering (with skip logic) ─────
+                # NOTE: FE statistics computed on full dataset (minor leakage).
+                # See pipeline.py Phase 3.3 comment for planned fix.
+                fe_start = _time.time()
                 if HAS_FEATURE_ENGINEER:
-                    try:
-                        session.update_progress('Engineering new features...', 45)
-                        target_col = session.profile.get('target_column')
-                        session.cleaned_df, fe_report = auto_engineer_features(
-                            session.cleaned_df, session.profile, target_col=target_col
-                        )
-                        # Store report for UI
-                        session.feature_engineering_report = fe_report
-                    except Exception:
-                        pass  # Feature engineering is optional, don't fail pipeline
+                    # Skip logic: check if FE steps are worth running
+                    n_numeric = len(session.cleaned_df.select_dtypes(include=[np.number]).columns)
+                    has_datetime = any(
+                        session.cleaned_df[c].dtype.name.startswith('datetime')
+                        for c in session.cleaned_df.columns
+                    )
+                    has_text = len(session.profile.get('text_columns', [])) > 0
+                    
+                    # Only run FE if there's something to engineer
+                    if n_numeric >= 2 or has_datetime or has_text:
+                        try:
+                            session.update_progress('Engineering new features...', 45)
+                            target_col = session.profile.get('target_column')
+                            session.cleaned_df, fe_report = auto_engineer_features(
+                                session.cleaned_df, session.profile, target_col=target_col
+                            )
+                            session.feature_engineering_report = fe_report
+                        except Exception:
+                            pass
+                    else:
+                        session.feature_engineering_report = {
+                            'steps': [], 'summary': {'skipped': True,
+                            'reason': 'Insufficient numeric/datetime/text columns'}
+                        }
+                session.timing['feature_engineering'] = round(_time.time() - fe_start, 3)
 
                 session.update_progress('Encoding and scaling...', 55)
                 
-                # Transform (includes NLP text processing)
+                # ── Transform ─────────────────────────────────
+                transform_start = _time.time()
                 session.transformed_df, session.transform_report, session.transform_metadata = transform_dataset(
                     session.cleaned_df.copy(), session.profile
                 )
+                session.timing['transform'] = round(_time.time() - transform_start, 3)
                 
-                # Save cleaned CSV
-                csv_path = os.path.join(session.output_dir, 'cleaned_data.csv')
-                session.transformed_df.to_csv(csv_path, index=False)
-
-                transformed_path = os.path.join(session.output_dir, 'transformed_data.csv')
-                session.transformed_df.to_csv(transformed_path, index=False)
-                self._upload_to_b2(session, transformed_path, 'data/transformed_data.csv')
+                # Save transformed data (single Parquet write — faster than CSV)
+                transformed_path = os.path.join(session.output_dir, 'transformed_data.parquet')
+                try:
+                    session.transformed_df.to_parquet(transformed_path, index=False)
+                except Exception:
+                    # Fallback to CSV if Parquet fails (e.g. mixed dtypes)
+                    transformed_path = os.path.join(session.output_dir, 'transformed_data.csv')
+                    session.transformed_df.to_csv(transformed_path, index=False)
+                self._upload_to_b2(session, transformed_path, 'data/transformed_data.parquet')
+                
+                # ── Cache results ──────────────────────────────
+                total_time = round(_time.time() - step_start, 3)
+                session.timing['clean_transform'] = total_time
+                session.timing['cache_hit'] = False
+                
+                self._cache.put(cache_fp, 'clean', {
+                    'df': session.cleaned_df,
+                    'report': session.clean_report,
+                }, elapsed_time=session.timing.get('clean', 0))
+                self._cache.put(cache_fp, 'transform', {
+                    'df': session.transformed_df,
+                    'report': {'summary': session.transform_report.get('summary', {}),
+                               'metadata': session.transform_metadata},
+                }, elapsed_time=total_time)
                 
                 # Save to experiment
                 if session.experiment_id:
@@ -375,6 +447,7 @@ class PipelineManager:
                         {
                             'clean_summary': session.clean_report.get('summary', {}),
                             'transform_summary': session.transform_report.get('summary', {}),
+                            'timing': session.timing,
                         }
                     )
                 
@@ -395,11 +468,12 @@ class PipelineManager:
             'message': 'Cleaning and transformation started',
         }
     
-    def train(self, session_id, time_budget_seconds=None):
+    def train(self, session_id, mode='balanced', time_budget_seconds=None):
         """Step 3: Train models (standard + deep learning + optional time series).
         
         Args:
             session_id: Session identifier.
+            mode: Training mode - 'quick' (3 models), 'balanced' (7), 'full' (14+).
             time_budget_seconds: Optional time limit for training in seconds.
         """
         session = self.get_session(session_id)
@@ -415,6 +489,8 @@ class PipelineManager:
         def _run():
             try:
                 session.update_progress('Starting model training...', 5)
+                import time as _time
+                train_start = _time.time()
                 
                 if session.is_timeseries:
                     # Time Series training
@@ -434,8 +510,10 @@ class PipelineManager:
                         session.transform_metadata,
                         session.output_dir,
                         progress_callback=lambda msg, prog: session.update_progress(msg, int(prog * 0.5)),
+                        mode=mode,
                         time_budget_seconds=time_budget_seconds,
                     )
+                session.timing['training'] = round(_time.time() - train_start, 3)
                 
                 # Store train/test data for later use
                 target_col = session.transform_metadata.get('target_column') or session.profile.get('target_column')

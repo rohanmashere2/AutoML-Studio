@@ -59,6 +59,11 @@ class AutoMLResults:
             return pd.DataFrame(fi)
         return pd.DataFrame()
     
+    @property
+    def timing(self):
+        """Return pipeline timing breakdown."""
+        return self._data.get('timing', {})
+    
     def __repr__(self):
         return (
             f"AutoMLResults(best_model='{self.best_model}', "
@@ -127,13 +132,14 @@ class AutoML:
         
         raise TimeoutError(f"Pipeline did not complete within {max_wait}s")
     
-    def fit(self, data, target=None, time_budget=None, problem_statement=None):
+    def fit(self, data, target=None, mode='balanced', time_budget=None, problem_statement=None):
         """
         Upload data and run the full AutoML pipeline.
         
         Args:
             data: Path to CSV/Excel/JSON/Parquet file, or pandas DataFrame.
             target: Name of the target column (auto-detected if not specified).
+            mode: Training mode - 'quick' (3 models), 'balanced' (7), 'full' (14+).
             time_budget: Maximum training time in seconds.
             problem_statement: Natural language description of the problem.
         
@@ -176,7 +182,7 @@ class AutoML:
         self._wait_for_completion()
         
         # Step 4: Train
-        train_data = {'session_id': self.session_id}
+        train_data = {'session_id': self.session_id, 'mode': mode}
         if time_budget:
             train_data['time_budget'] = time_budget
         

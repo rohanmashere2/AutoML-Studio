@@ -44,62 +44,90 @@ def auto_engineer_features(df, profile, target_col=None):
             - engineered_df: DataFrame with new features appended.
             - engineering_report: dict describing every step and a summary.
     """
+    import time as _time
     logger.info("Starting automated feature engineering (%d cols, %d rows)",
                 df.shape[1], df.shape[0])
 
     engineered_df = df.copy()
     original_feature_count = engineered_df.shape[1]
     steps = []
+    fe_start = _time.time()
 
-    # 1. DateTime Feature Extraction
+    # Step 1 runs first — it creates datetime columns that later steps may use
     step = _extract_datetime_features(engineered_df, profile, target_col)
     steps.append(step)
 
-    # 2. Log Transform for Skewed Features
-    step = _log_transform_skewed(engineered_df, profile, target_col)
-    steps.append(step)
+    # Steps 2–8 are independent — run in parallel for speed
+    # Each step reads engineered_df columns and adds new columns.
+    # Using ThreadPoolExecutor because pandas/numpy release the GIL.
+    parallel_steps = [
+        ('Log Transform', _log_transform_skewed),
+        ('Interaction Features', _create_interaction_features),
+        ('Ratio Features', _create_ratio_features),
+        ('Frequency Encoding', _create_frequency_features),
+        ('Cyclical Encoding', _create_cyclical_features),
+        ('Binning', _bin_continuous_features),
+        ('Text Length', _text_length_features),
+    ]
 
-    # 3. Interaction Features
-    step = _create_interaction_features(engineered_df, profile, target_col)
-    steps.append(step)
+    try:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import os
 
-    # 4. Ratio Features
-    step = _create_ratio_features(engineered_df, profile, target_col)
-    steps.append(step)
+        n_workers = min(4, max(1, (os.cpu_count() or 4) // 2))
+        
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            futures = {}
+            for name, func in parallel_steps:
+                # Each step works on the shared engineered_df
+                # This is safe because each step only ADDS new columns
+                # and reads (but doesn't modify) existing columns
+                future = pool.submit(_safe_step, func, engineered_df, profile, target_col)
+                futures[future] = name
 
-    # 5. Frequency Encoding Features
-    step = _create_frequency_features(engineered_df, profile, target_col)
-    steps.append(step)
+            for future in as_completed(futures):
+                step_result = future.result()
+                if step_result is not None:
+                    steps.append(step_result)
 
-    # 6. Cyclical Encoding Features
-    step = _create_cyclical_features(engineered_df, profile, target_col)
-    steps.append(step)
-
-    # 7. Binning for Continuous Features
-    step = _bin_continuous_features(engineered_df, profile, target_col)
-    steps.append(step)
-
-    # 8. Text Length Features
-    step = _text_length_features(engineered_df, profile, target_col)
-    steps.append(step)
+    except Exception as e:
+        # Fallback: run sequentially if threading fails
+        logger.warning("Parallel FE failed (%s), falling back to sequential", e)
+        for name, func in parallel_steps:
+            step_result = _safe_step(func, engineered_df, profile, target_col)
+            if step_result is not None:
+                steps.append(step_result)
 
     total_created = sum(s.get("count", 0) for s in steps)
+    elapsed = round(_time.time() - fe_start, 3)
     report = {
         "steps": steps,
         "summary": {
             "total_features_created": total_created,
             "original_features": original_feature_count,
             "final_features": engineered_df.shape[1],
+            "elapsed_seconds": elapsed,
+            "parallel": True,
         },
     }
 
     logger.info(
-        "Feature engineering complete — %d new features (original %d → final %d)",
+        "Feature engineering complete — %d new features (original %d → final %d) in %.2fs",
         total_created,
         original_feature_count,
         engineered_df.shape[1],
+        elapsed,
     )
     return engineered_df, report
+
+
+def _safe_step(func, df, profile, target_col):
+    """Run a FE step with exception guarding."""
+    try:
+        return func(df, profile, target_col)
+    except Exception as e:
+        logger.warning("FE step %s failed: %s", func.__name__, e)
+        return {"name": func.__name__, "count": 0, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
