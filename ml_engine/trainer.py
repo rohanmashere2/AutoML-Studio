@@ -180,7 +180,7 @@ def _detect_gpu():
     try:
         import torch
         return torch.cuda.is_available()
-    except ImportError:
+    except Exception:
         return False
 
 HAS_GPU = _detect_gpu()
